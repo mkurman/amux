@@ -61,6 +61,9 @@ export function TitleBar() {
       toggleSettings();
     }
     window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("tamux-open-settings-tab", {
+        detail: { tab: "about" },
+      }));
       window.dispatchEvent(new CustomEvent("amux-open-settings-tab", {
         detail: { tab: "about" },
       }));
@@ -125,7 +128,7 @@ export function TitleBar() {
   ]);
 
   useEffect(() => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.onWindowState) return;
 
     amux.getPlatform?.().then((value: string) => setPlatform(value));
@@ -164,12 +167,12 @@ export function TitleBar() {
     };
   }, [openMenuId]);
 
-  const hasAmux = typeof window !== "undefined" && "amux" in window;
+  const hasAmux = typeof window !== "undefined" && ("tamux" in window || "amux" in window);
   if (!hasAmux) return null;
   if (platform === null) return null;
   if (platform === "win32") return null;
 
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
 
   return (
     <div
@@ -197,7 +200,7 @@ export function TitleBar() {
               fontWeight: 700,
             }}
           >
-            amux
+            Tamux
           </span>
           <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)" }}>agentic runtime</span>
         </div>

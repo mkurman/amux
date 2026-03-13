@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    amux release build for Windows (PowerShell)
+    tamux release build for Windows (PowerShell)
 
 .DESCRIPTION
     Builds Rust binaries, frontend, and Electron app with optional code signing.
@@ -165,7 +165,7 @@ $totalSteps = 5
 $step = 0
 
 Write-Host "`n============================================================" -ForegroundColor White
-Write-Host " amux release build" -ForegroundColor White
+Write-Host " tamux release build" -ForegroundColor White
 Write-Host "============================================================" -ForegroundColor White
 
 # Step 1: Rust
@@ -211,10 +211,10 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $targetDir = if ($Target) { Join-Path $ProjectRoot "target" $Target "release" } else { Join-Path $ProjectRoot "target" "release" }
 
 $binaries = @(
-    @{ Name = "amux-daemon"; Desc = "Daemon" },
-    @{ Name = "amux";        Desc = "CLI" },
-    @{ Name = "amux-mcp";    Desc = "MCP server" },
-    @{ Name = "amux-gateway"; Desc = "Chat gateway" }
+    @{ Name = "tamux-daemon"; Desc = "Daemon" },
+    @{ Name = "tamux";        Desc = "CLI" },
+    @{ Name = "tamux-mcp";    Desc = "MCP server" },
+    @{ Name = "tamux-gateway"; Desc = "Chat gateway" }
 )
 
 foreach ($bin in $binaries) {
@@ -235,7 +235,7 @@ foreach ($bin in $binaries) {
 # Copy to frontend/dist for Electron bundling
 $distDir = Join-Path $FrontendDir "dist"
 if (Test-Path $distDir) {
-    foreach ($name in @("amux-daemon.exe", "amux.exe")) {
+    foreach ($name in @("tamux-daemon.exe", "tamux.exe")) {
         $src = Join-Path $OutDir $name
         if (Test-Path $src) { Copy-Item $src $distDir -Force }
     }

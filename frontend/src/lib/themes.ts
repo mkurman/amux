@@ -84,7 +84,7 @@ function withAlpha(color: string, alpha: number): string {
 export const BUILTIN_THEMES: TerminalTheme[] = [
   {
     name: "Default Dark",
-    author: "amux",
+    author: "tamux",
     colors: {
       background: "#1e1e1e",
       foreground: "#cccccc",
@@ -346,7 +346,7 @@ export function getAppShellTheme(
   const bgTertiary = mix(colors.background, colors.black, 0.2);
   const bgSurface = mix(colors.background, colors.white, 0.1);
   const bgElevated = mix(colors.background, colors.white, 0.16);
-  
+
   // Agent-centric accent colors based on theme
   const accent = colors.cyan; // Cyan/teal for primary accent
   const agent = colors.blue;

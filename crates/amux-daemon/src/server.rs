@@ -15,7 +15,7 @@ use crate::session_manager::SessionManager;
 pub fn socket_path() -> std::path::PathBuf {
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| "/tmp".to_string());
-    std::path::PathBuf::from(runtime_dir).join("amux-daemon.sock")
+    std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock")
 }
 
 /// Run the IPC server until a shutdown signal is received.

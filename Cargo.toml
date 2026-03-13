@@ -12,7 +12,7 @@ members = [
 version = "0.1.1"
 edition = "2021"
 license = "MIT"
-authors = ["amux contributors"]
+authors = ["tamux contributors"]
 
 [workspace.dependencies]
 # Shared dependencies across the workspace
@@ -31,4 +31,4 @@ futures = "0.3"
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # Protocol
-amux-protocol = { path = "crates/amux-protocol" }
+amux-protocol = { package = "tamux-protocol", path = "crates/amux-protocol" }

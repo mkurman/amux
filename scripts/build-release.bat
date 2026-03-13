@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM amux release build for Windows (native)
+REM tamux release build for Windows (native)
 REM
 REM Prerequisites:
 REM   - Rust toolchain (rustup)
@@ -57,14 +57,14 @@ REM -----------------------------------------------------------
 echo [3/5] Collecting artifacts...
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 
-copy /Y "%PROJECT_ROOT%\target\release\amux-daemon.exe" "%OUT_DIR%\" >nul
-copy /Y "%PROJECT_ROOT%\target\release\amux.exe"        "%OUT_DIR%\" >nul
-copy /Y "%PROJECT_ROOT%\target\release\amux-mcp.exe"    "%OUT_DIR%\" >nul 2>nul
-copy /Y "%PROJECT_ROOT%\target\release\amux-gateway.exe" "%OUT_DIR%\" >nul 2>nul
+copy /Y "%PROJECT_ROOT%\target\release\tamux-daemon.exe" "%OUT_DIR%\" >nul
+copy /Y "%PROJECT_ROOT%\target\release\tamux.exe"        "%OUT_DIR%\" >nul
+copy /Y "%PROJECT_ROOT%\target\release\tamux-mcp.exe"    "%OUT_DIR%\" >nul 2>nul
+copy /Y "%PROJECT_ROOT%\target\release\tamux-gateway.exe" "%OUT_DIR%\" >nul 2>nul
 
 REM Copy daemon + CLI into frontend/dist for Electron bundling
-copy /Y "%OUT_DIR%\amux-daemon.exe" "%PROJECT_ROOT%\frontend\dist\" >nul
-copy /Y "%OUT_DIR%\amux.exe"        "%PROJECT_ROOT%\frontend\dist\" >nul
+copy /Y "%OUT_DIR%\tamux-daemon.exe" "%PROJECT_ROOT%\frontend\dist\" >nul
+copy /Y "%OUT_DIR%\tamux.exe"        "%PROJECT_ROOT%\frontend\dist\" >nul
 echo       Done.
 
 REM -----------------------------------------------------------
@@ -72,10 +72,10 @@ REM Step 4: Sign Rust binaries (if requested)
 REM -----------------------------------------------------------
 if %SIGN%==1 (
     echo [4/5] Signing Rust binaries...
-    call :sign_file "%OUT_DIR%\amux-daemon.exe"
-    call :sign_file "%OUT_DIR%\amux.exe"
-    if exist "%OUT_DIR%\amux-mcp.exe"     call :sign_file "%OUT_DIR%\amux-mcp.exe"
-    if exist "%OUT_DIR%\amux-gateway.exe"  call :sign_file "%OUT_DIR%\amux-gateway.exe"
+    call :sign_file "%OUT_DIR%\tamux-daemon.exe"
+    call :sign_file "%OUT_DIR%\tamux.exe"
+    if exist "%OUT_DIR%\tamux-mcp.exe"     call :sign_file "%OUT_DIR%\tamux-mcp.exe"
+    if exist "%OUT_DIR%\tamux-gateway.exe"  call :sign_file "%OUT_DIR%\tamux-gateway.exe"
     echo       Done.
 ) else (
     echo [4/5] Skipping code signing (pass --sign to enable).
@@ -104,10 +104,10 @@ if errorlevel 1 (
 )
 
 REM Copy Electron artifacts to dist-release
-if exist "%PROJECT_ROOT%\frontend\release\amux-portable.exe" (
-    copy /Y "%PROJECT_ROOT%\frontend\release\amux-portable.exe" "%OUT_DIR%\" >nul
+if exist "%PROJECT_ROOT%\frontend\release\tamux-portable.exe" (
+    copy /Y "%PROJECT_ROOT%\frontend\release\tamux-portable.exe" "%OUT_DIR%\" >nul
 )
-for %%f in ("%PROJECT_ROOT%\frontend\release\amux Setup*.exe") do (
+for %%f in ("%PROJECT_ROOT%\frontend\release\tamux Setup*.exe") do (
     copy /Y "%%f" "%OUT_DIR%\" >nul
 )
 echo       Done.
@@ -123,14 +123,14 @@ echo.
 echo  Output:   %OUT_DIR%\
 echo.
 echo  Binaries:
-echo    amux.exe              CLI
-echo    amux-daemon.exe       Daemon
-echo    amux-mcp.exe          MCP server
-echo    amux-gateway.exe      Chat gateway
+echo    tamux.exe             CLI
+echo    tamux-daemon.exe      Daemon
+echo    tamux-mcp.exe         MCP server
+echo    tamux-gateway.exe     Chat gateway
 echo.
 echo  Electron:
-echo    amux-portable.exe     Portable app
-echo    amux Setup *.exe      NSIS installer
+echo    tamux-portable.exe    Portable app
+echo    tamux Setup *.exe     NSIS installer
 echo.
 if %SIGN%==0 (
     echo  NOTE: Binaries are NOT signed. Run with --sign to sign.

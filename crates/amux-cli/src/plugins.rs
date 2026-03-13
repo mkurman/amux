@@ -28,8 +28,8 @@ struct PackageJson {
     name: String,
     #[serde(default)]
     version: Option<String>,
-    #[serde(default, rename = "amuxPlugin")]
-    amux_plugin: Option<AmuxPluginManifest>,
+    #[serde(default, rename = "tamuxPlugin", alias = "amuxPlugin")]
+    tamux_plugin: Option<AmuxPluginManifest>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,9 +69,9 @@ fn ensure_plugin_workspace(root: &Path) -> Result<()> {
     let package_json_path = root.join("package.json");
     if !package_json_path.exists() {
         let content = serde_json::json!({
-            "name": "amux-external-plugins",
+            "name": "tamux-external-plugins",
             "private": true,
-            "description": "Runtime-installed amux plugins"
+            "description": "Runtime-installed tamux plugins"
         });
         std::fs::write(package_json_path, serde_json::to_vec_pretty(&content)?)?;
     }
@@ -167,13 +167,13 @@ fn validate_plugin_package(package_dir: &Path) -> Result<InstalledPluginRecord> 
         .with_context(|| format!("failed to parse {}", package_json_path.display()))?;
 
     let manifest = package_json
-        .amux_plugin
-        .ok_or_else(|| anyhow!("package '{}' is missing the required 'amuxPlugin' field", package_json.name))?;
+        .tamux_plugin
+        .ok_or_else(|| anyhow!("package '{}' is missing the required 'tamuxPlugin' field (legacy 'amuxPlugin' is also accepted)", package_json.name))?;
 
     let format = manifest.format().trim().to_lowercase();
     if format != "script" {
         bail!(
-            "package '{}' declares unsupported amux plugin format '{}'; only 'script' is currently supported",
+            "package '{}' declares unsupported tamux plugin format '{}'; only 'script' is currently supported",
             package_json.name,
             format
         );
@@ -185,7 +185,7 @@ fn validate_plugin_package(package_dir: &Path) -> Result<InstalledPluginRecord> 
     let entry_path = package_dir.join(manifest.entry());
     if !entry_path.is_file() {
         bail!(
-            "package '{}' declares amuxPlugin.entry='{}' but the file does not exist",
+            "package '{}' declares tamuxPlugin.entry='{}' but the file does not exist",
             package_json.name,
             manifest.entry()
         );
@@ -196,7 +196,7 @@ fn validate_plugin_package(package_dir: &Path) -> Result<InstalledPluginRecord> 
         .with_context(|| format!("failed to resolve {}", entry_path.display()))?;
     if canonical_entry_path != package_root && !canonical_entry_path.starts_with(&package_root) {
         bail!(
-            "package '{}' declares amuxPlugin.entry='{}' outside the installed package directory",
+            "package '{}' declares tamuxPlugin.entry='{}' outside the installed package directory",
             package_json.name,
             manifest.entry()
         );

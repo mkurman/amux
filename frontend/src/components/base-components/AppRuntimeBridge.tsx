@@ -58,7 +58,7 @@ export const AppRuntimeBridge: React.FC = () => {
             ),
         );
 
-        const amux = (window as any).amux;
+        const amux = (window as any).tamux ?? (window as any).amux;
         void amux?.setWindowOpacity?.(settings.opacity);
     }, [
         settings.customTerminalBackground,
@@ -71,7 +71,7 @@ export const AppRuntimeBridge: React.FC = () => {
     ]);
 
     useEffect(() => {
-        const amux = (window as any).amux;
+        const amux = (window as any).tamux ?? (window as any).amux;
         if (!amux?.onAppCommand) return;
 
         return amux.onAppCommand((command: string) => {
@@ -132,6 +132,9 @@ export const AppRuntimeBridge: React.FC = () => {
                         toggleSettings();
                     }
                     window.setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent("tamux-open-settings-tab", {
+                            detail: { tab: "about" },
+                        }));
                         window.dispatchEvent(new CustomEvent("amux-open-settings-tab", {
                             detail: { tab: "about" },
                         }));

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# amux-next development script
+# tamux development script
 # Usage: ./scripts/dev.sh [daemon|ui|cli|all]
 set -euo pipefail
 
@@ -10,16 +10,15 @@ cmd="${1:-all}"
 
 case "$cmd" in
   daemon)
-    echo "▶ Starting amux-daemon in development mode..."
+    echo "▶ Starting tamux-daemon in development mode..."
     cd "$PROJECT_ROOT"
-    AMUX_LOG=debug cargo run --bin amux-daemon
+    TAMUX_LOG=debug cargo run --bin tamux-daemon
     ;;
   ui)
-    echo "▶ Starting Tauri dev (frontend + backend)..."
+    echo "▶ Starting Electron dev UI..."
     cd "$PROJECT_ROOT/frontend"
     npm install
-    cd "$PROJECT_ROOT/crates/amux-tauri/src-tauri"
-    cargo tauri dev
+    npm run dev:electron
     ;;
   frontend)
     echo "▶ Starting frontend dev server only..."
@@ -30,8 +29,8 @@ case "$cmd" in
   cli)
     echo "▶ Building CLI..."
     cd "$PROJECT_ROOT"
-    cargo build --bin amux
-    echo "✓ CLI built: target/debug/amux"
+    cargo build --bin tamux
+    echo "✓ CLI built: target/debug/tamux"
     ;;
   all)
     echo "▶ Building all crates..."

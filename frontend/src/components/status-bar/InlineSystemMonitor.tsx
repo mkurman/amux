@@ -10,7 +10,7 @@ export function InlineSystemMonitor() {
 
     useEffect(() => {
         let active = true;
-        const amux = (window as any).amux;
+        const amux = (window as any).tamux ?? (window as any).amux;
         if (!amux?.getSystemMonitorSnapshot) return;
 
         const fetchStats = async () => {

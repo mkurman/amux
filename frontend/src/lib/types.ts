@@ -219,7 +219,7 @@ export const DEFAULT_SETTINGS: AmuxSettings = {
   snapshotBackend: "tar",
   wormIntegrityEnabled: true,
   cerbosEndpoint: "",
-  mcpServersJson: "{\n  \"amux\": {\n    \"command\": \"amux-mcp\"\n  }\n}",
+  mcpServersJson: "{\n  \"tamux\": {\n    \"command\": \"tamux-mcp\"\n  }\n}",
   gatewayEnabled: false,
   slackToken: "",
   slackChannelFilter: "",
@@ -231,7 +231,7 @@ export const DEFAULT_SETTINGS: AmuxSettings = {
   whatsappToken: "",
   whatsappPhoneNumberId: "",
   whatsappAllowedContacts: "",
-  gatewayCommandPrefix: "!amux",
+  gatewayCommandPrefix: "!tamux",
 };
 
 // ---------------------------------------------------------------------------

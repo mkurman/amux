@@ -24,104 +24,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "amux-cli"
-version = "0.1.1"
-dependencies = [
- "amux-protocol",
- "anyhow",
- "base64",
- "bytes",
- "clap",
- "futures",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "amux-daemon"
-version = "0.1.1"
-dependencies = [
- "amux-protocol",
- "anyhow",
- "base64",
- "bytes",
- "dirs",
- "futures",
- "interprocess",
- "portable-pty",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "strip-ansi-escapes",
- "sysinfo",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tree-sitter",
- "tree-sitter-bash",
- "uuid",
- "walkdir",
-]
-
-[[package]]
-name = "amux-gateway"
-version = "0.1.1"
-dependencies = [
- "amux-protocol",
- "anyhow",
- "futures",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "amux-mcp"
-version = "0.1.1"
-dependencies = [
- "amux-protocol",
- "anyhow",
- "futures",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "amux-protocol"
-version = "0.1.1"
-dependencies = [
- "bincode",
- "bytes",
- "dirs",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1246,6 +1148,104 @@ dependencies = [
  "once_cell",
  "rayon",
  "windows",
+]
+
+[[package]]
+name = "tamux-cli"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "clap",
+ "futures",
+ "serde",
+ "serde_json",
+ "tamux-protocol",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "tamux-daemon"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bytes",
+ "dirs",
+ "futures",
+ "interprocess",
+ "portable-pty",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strip-ansi-escapes",
+ "sysinfo",
+ "tamux-protocol",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "tamux-gateway"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "serde",
+ "serde_json",
+ "tamux-protocol",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tamux-mcp"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "futures",
+ "serde",
+ "serde_json",
+ "tamux-protocol",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "tamux-protocol"
+version = "0.1.1"
+dependencies = [
+ "bincode",
+ "bytes",
+ "dirs",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

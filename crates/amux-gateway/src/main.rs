@@ -1,11 +1,11 @@
-//! amux-gateway: Chat platform gateway service.
+//! tamux-gateway: Chat platform gateway service.
 //!
-//! Bridges external messaging platforms (Slack, Telegram, Discord) to the amux
+//! Bridges external messaging platforms (Slack, Telegram, Discord) to the tamux
 //! daemon. Incoming chat messages that match a command prefix are translated
 //! into `ClientMessage::ExecuteManagedCommand` requests, and daemon responses
 //! are forwarded back through the originating chat provider.
 //!
-//! The gateway runs as a standalone daemon process alongside `amux-daemon`.
+//! The gateway runs as a standalone daemon process alongside `tamux-daemon`.
 
 mod discord;
 mod router;
@@ -65,14 +65,14 @@ pub trait GatewayProvider: Send + 'static {
 // Daemon IPC connection
 // ---------------------------------------------------------------------------
 
-/// Connect to the amux daemon and return a framed stream using `AmuxCodec`.
+/// Connect to the tamux daemon and return a framed stream using `AmuxCodec`.
 async fn connect_to_daemon(
 ) -> Result<Framed<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin, AmuxCodec>> {
     #[cfg(unix)]
     {
         let runtime_dir =
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let path = std::path::PathBuf::from(runtime_dir).join("amux-daemon.sock");
+        let path = std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock");
         let stream = tokio::net::UnixStream::connect(&path)
             .await
             .with_context(|| format!("cannot connect to daemon at {}", path.display()))?;
@@ -164,7 +164,7 @@ impl Gateway {
         }
 
         // --- Connect to daemon ---
-        tracing::info!("connecting to amux daemon…");
+        tracing::info!("connecting to tamux daemon…");
         let mut framed = connect_to_daemon().await?;
         let session_id = spawn_daemon_session(&mut framed).await?;
 
@@ -428,9 +428,9 @@ impl Gateway {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialise tracing with file-based log output alongside stderr.
-    let log_path = amux_protocol::log_file_path("amux-gateway.log");
+    let log_path = amux_protocol::log_file_path("tamux-gateway.log");
     let log_dir = log_path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let file_appender = tracing_appender::rolling::daily(log_dir, "amux-gateway.log");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "tamux-gateway.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
@@ -442,7 +442,7 @@ async fn main() -> Result<()> {
         .with_ansi(false)
         .init();
 
-    tracing::info!("amux-gateway starting");
+    tracing::info!("tamux-gateway starting");
     tracing::info!(
         "supported platforms: Slack (AMUX_SLACK_TOKEN), \
          Telegram (AMUX_TELEGRAM_TOKEN), Discord (AMUX_DISCORD_TOKEN)"

@@ -73,6 +73,7 @@ declare global {
     };
 
     interface Window {
+        tamux?: AmuxBridge;
         amux?: AmuxBridge;
     }
 }

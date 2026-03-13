@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# amux release build (Linux / macOS / WSL)
+# tamux release build (Linux / macOS / WSL)
 #
 # Usage:
 #   ./scripts/build-release.sh                    Build without signing
@@ -59,7 +59,7 @@ fi
 
 echo ""
 echo "============================================================"
-echo " amux release build"
+echo " tamux release build"
 echo "============================================================"
 
 # -----------------------------------------------------------
@@ -103,7 +103,7 @@ else
     TARGET_DIR="$PROJECT_ROOT/target/release"
 fi
 
-for bin in amux-daemon amux amux-mcp amux-gateway; do
+for bin in tamux-daemon tamux tamux-mcp tamux-gateway; do
     if [[ -f "$TARGET_DIR/${bin}${EXE}" ]]; then
         cp "$TARGET_DIR/${bin}${EXE}" "$OUT_DIR/"
         ok_msg "Collected ${bin}${EXE}"
@@ -112,7 +112,7 @@ done
 
 # Copy to frontend/dist for Electron bundling
 if [[ -d "$PROJECT_ROOT/frontend/dist" ]]; then
-    for bin in amux-daemon amux; do
+    for bin in tamux-daemon tamux; do
         if [[ -f "$OUT_DIR/${bin}${EXE}" ]]; then
             cp "$OUT_DIR/${bin}${EXE}" "$PROJECT_ROOT/frontend/dist/"
         fi

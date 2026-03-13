@@ -8,7 +8,7 @@ pub fn default_tcp_addr() -> String {
     format!("{DEFAULT_TCP_HOST}:{DEFAULT_TCP_PORT}")
 }
 
-pub fn amux_data_dir() -> PathBuf {
+fn legacy_amux_data_dir() -> PathBuf {
     #[cfg(windows)]
     {
         dirs::data_local_dir()
@@ -24,22 +24,72 @@ pub fn amux_data_dir() -> PathBuf {
     }
 }
 
-pub fn ensure_amux_data_dir() -> std::io::Result<PathBuf> {
-    let dir = amux_data_dir();
+pub fn tamux_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("tamux")
+    }
+
+    #[cfg(not(windows))]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".tamux")
+    }
+}
+
+pub fn amux_data_dir() -> PathBuf {
+    tamux_data_dir()
+}
+
+fn migrate_legacy_data_dir() -> std::io::Result<()> {
+    let target = tamux_data_dir();
+    let legacy = legacy_amux_data_dir();
+    if target.exists() || !legacy.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let _ = std::fs::rename(&legacy, &target);
+    Ok(())
+}
+
+fn legacy_config_path() -> PathBuf {
+    let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join("amux").join("config.json")
+}
+
+fn tamux_config_path() -> PathBuf {
+    let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join("tamux").join("config.json")
+}
+
+pub fn ensure_tamux_data_dir() -> std::io::Result<PathBuf> {
+    migrate_legacy_data_dir()?;
+    let dir = tamux_data_dir();
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
-pub fn log_file_path(file_name: &str) -> PathBuf {
-    amux_data_dir().join(file_name)
+pub fn ensure_amux_data_dir() -> std::io::Result<PathBuf> {
+    ensure_tamux_data_dir()
 }
 
-/// User-configurable settings for amux.
+pub fn log_file_path(file_name: &str) -> PathBuf {
+    tamux_data_dir().join(file_name)
+}
+
+/// User-configurable settings for tamux.
 ///
 /// Config file locations:
-/// - Linux:   ~/.config/amux/config.json
-/// - macOS:   ~/Library/Application Support/amux/config.json
-/// - Windows: %APPDATA%\amux\config.json
+/// - Linux:   ~/.config/tamux/config.json
+/// - macOS:   ~/Library/Application Support/tamux/config.json
+/// - Windows: %APPDATA%\tamux\config.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AmuxConfig {
@@ -106,8 +156,11 @@ impl Default for AmuxConfig {
 impl AmuxConfig {
     /// Load config from the default location, or return defaults.
     pub fn load() -> Self {
-        let path = Self::config_path();
-        if path.exists() {
+        for path in [Self::config_path(), legacy_config_path()] {
+            if !path.exists() {
+                continue;
+            }
+
             match std::fs::read_to_string(&path) {
                 Ok(data) => match serde_json::from_str(&data) {
                     Ok(cfg) => return cfg,
@@ -136,7 +189,6 @@ impl AmuxConfig {
 
     /// Platform-specific config file path.
     pub fn config_path() -> PathBuf {
-        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        base.join("amux").join("config.json")
+        tamux_config_path()
     }
 }

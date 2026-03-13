@@ -11,7 +11,7 @@ function getBridge(): AITrainingBridge | null {
         return null;
     }
 
-    return window.amux ?? null;
+    return window.tamux ?? window.amux ?? null;
 }
 
 export async function discoverAITrainingProfiles(workspacePath?: string | null): Promise<DiscoveredAITraining[]> {

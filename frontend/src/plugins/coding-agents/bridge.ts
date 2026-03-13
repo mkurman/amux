@@ -11,7 +11,7 @@ function getBridge(): CodingAgentsBridge | null {
         return null;
     }
 
-    return window.amux ?? null;
+    return window.tamux ?? window.amux ?? null;
 }
 
 export function encodeTerminalInput(text: string): string {

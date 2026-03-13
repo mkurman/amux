@@ -1,24 +1,26 @@
 ```
-                                 ___
-   __ _ _ __ ___  _   ___  __   |_  |
-  / _` | '_ ` _ \| | | \ \/ /     | |
- | (_| | | | | | | |_| |>  <   ___| |
-  \__,_|_| |_| |_|\__,_/_/\_\ |_____|
+  _                             
+ | |_ __ _ _ __ ___  _   ___  __
+ | __/ _` | '_ ` _ \| | | \ \/ /
+ | || (_| | | | | | | |_| |>  < 
+  \__\__,_|_| |_| |_|\__,_/_/\_\
 
-  Agentic Terminal Multiplexer
+  Terminal Agentic Multiplexer
 ```
 
-# amux
+# tamux
 
-**Agentic Terminal Multiplexer** -- a terminal multiplexer built for the age of AI agents.
+**Terminal Agentic Multiplexer** -- a terminal multiplexer built for the age of AI agents.
 
-amux combines tmux-like session management with first-class AI agent integration, structured safety infrastructure, and a modern React-based UI. The backend is written in Rust for performance and reliability; the frontend is a React/TypeScript application rendered inside an Electron shell.
+Official website: `https://tamux.app`
+
+tamux combines tmux-like session management with first-class AI agent integration, structured safety infrastructure, and a modern React-based UI. The backend is written in Rust for performance and reliability; the frontend is a React/TypeScript application rendered inside an Electron shell.
 
 ---
 
 ## Overview
 
-amux is an agentic-first terminal multiplexer designed to serve as a unified command environment where humans and AI agents collaborate. Rather than bolting AI onto a traditional terminal, amux treats autonomous agent execution as a core primitive alongside PTY management, session persistence, and workspace isolation.
+tamux is an agentic-first terminal multiplexer designed to serve as a unified command environment where humans and AI agents collaborate. Rather than bolting AI onto a traditional terminal, tamux treats autonomous agent execution as a core primitive alongside PTY management, session persistence, and workspace isolation.
 
 The daemon runs independently of any UI client, ensuring that agent workflows, long-running processes, and background sessions survive disconnects and can be reattached from any client -- CLI, Electron, or a future web interface.
 
@@ -82,12 +84,12 @@ Key design principles:
 
 ### MCP Server
 
-- **amux-mcp** exposes the daemon as a Model Context Protocol server over JSON-RPC stdio transport.
+- **tamux-mcp** exposes the daemon as a Model Context Protocol server over JSON-RPC stdio transport.
 - Register it with Claude Code, Cursor, or any MCP-compatible client to give external agents access to terminal sessions, managed execution, snapshot management, and history search.
 
 ### Chat Gateway
 
-- **amux-gateway** bridges Slack, Discord, and Telegram to the daemon.
+- **tamux-gateway** bridges Slack, Discord, and Telegram to the daemon.
 - Incoming messages matching a command prefix are translated into managed command requests.
 - Daemon responses are streamed back to the originating chat channel.
 - Per-chat session stores maintain conversation context across messages.
@@ -113,38 +115,38 @@ Key design principles:
 
 ```text
 +-------------------+     +-------------------+     +-------------------+
-|   Electron Shell  |     |     amux CLI      |     |   amux-gateway    |
+|   Electron Shell  |     |     tamux CLI     |     |   tamux-gateway   |
 |  React/TypeScript |     |  (clap commands)  |     | Slack/Discord/TG  |
-+--------+----------+     +--------+----------+     +--------+----------+
++--------+----------+     +--------+----------+     +---------+---------+
          |                         |                          |
          |    IPC (Unix socket     |    IPC (Unix socket      |
          |     or TCP on Win)      |     or TCP on Win)       |
          +------------+------------+------------+-------------+
                       |                         |
-               +------+-------------------------+------+
-               |           amux-daemon                 |
-               |                                       |
-               |  +----------+  +----------+  +-----+  |
-               |  | PTY Bus  |  | Lane     |  | AST |  |
-               |  | Manager  |  | Queue    |  | Val |  |
-               |  +----------+  +----------+  +-----+  |
-               |  +----------+  +----------+  +-----+  |
+               +------+-------------------------+-------+
+               |           tamux-daemon                 |
+               |                                        |
+               |  +----------+  +----------+  +-----+   |
+               |  | PTY Bus  |  | Lane     |  | AST |   |
+               |  | Manager  |  | Queue    |  | Val |   |
+               |  +----------+  +----------+  +-----+   |
+               |  +----------+  +----------+  +------+  |
                |  | Snapshot |  | Policy   |  | Cred |  |
                |  | Engine   |  | Engine   |  | Scrub|  |
-               |  +----------+  +----------+  +-----+  |
-               |  +----------+  +----------+  +-----+  |
+               |  +----------+  +----------+  +------+  |
+               |  +----------+  +----------+  +------+  |
                |  | CRIU     |  | WORM     |  | FTS5 |  |
                |  | C/R      |  | Ledger   |  | Hist |  |
-               |  +----------+  +----------+  +-----+  |
-               +---------------------------------------+
+               |  +----------+  +----------+  +------+  |
+               +----------------------------------------+
                       |
-               +------+------+
-               | amux-protocol|
-               | (bincode IPC)|
-               +--------------+
+               +------+--------+
+               | tamux-protocol|
+               | (bincode IPC) |
+               +---------------+
 
                +-------------------+
-               |     amux-mcp      |
+               |     tamux-mcp     |
                | JSON-RPC / stdio  |
                | (MCP server)      |
                +-------------------+
@@ -154,11 +156,11 @@ Key design principles:
 
 | Crate | Role |
 |---|---|
-| `amux-protocol` | Shared message types, length-prefixed bincode codec, and configuration |
-| `amux-daemon` | Background daemon: PTY management, lane queue, snapshots, policy engine, CRIU, credential scrubbing, WORM telemetry, tree-sitter indexing, SQLite/FTS5 history |
-| `amux-cli` | Command-line client (`amux list`, `amux new`, `amux attach`, `amux kill`, `amux exec`, `amux ping`) |
-| `amux-gateway` | Chat platform bridge (Slack, Discord, Telegram) |
-| `amux-mcp` | Model Context Protocol server exposing daemon capabilities over JSON-RPC stdio |
+| `tamux-protocol` | Shared message types, length-prefixed bincode codec, and configuration |
+| `tamux-daemon` | Background daemon: PTY management, lane queue, snapshots, policy engine, CRIU, credential scrubbing, WORM telemetry, tree-sitter indexing, SQLite/FTS5 history |
+| `tamux-cli` | Command-line client crate that builds the `tamux` binary (`tamux list`, `tamux new`, `tamux attach`, `tamux kill`, `tamux exec`, `tamux ping`) |
+| `tamux-gateway` | Chat platform bridge crate that builds the `tamux-gateway` binary |
+| `tamux-mcp` | MCP server crate that builds the `tamux-mcp` binary |
 
 ---
 
@@ -190,11 +192,11 @@ All providers use OpenAI-compatible chat completion endpoints. Switch providers 
 ## Documentation
 
 - [Building CDUI Components And Views With YAML](docs/cdui-yaml-views.md)
-- [Creating Your Own amux Plugin](docs/plugin-development.md)
+- [Creating Your Own tamux Plugin](docs/plugin-development.md)
 
-Runtime-installed plugins are now supported through `amux install plugin <npm-package-or-local-path>`.
+Runtime-installed plugins are now supported through `tamux install plugin <npm-package-or-local-path>`.
 
-External npm plugins must declare an `amuxPlugin` field in their `package.json` that points to a self-contained browser script entry file.
+External npm plugins should declare a `tamuxPlugin` field in their `package.json` that points to a self-contained browser script entry file. The legacy `amuxPlugin` field is still accepted for compatibility.
 
 ## Getting Started
 
@@ -231,11 +233,11 @@ Build the repository in slices depending on what you are changing:
 cargo build --release
 
 # Individual Rust components
-cargo build --release -p amux-daemon
-cargo build --release -p amux-cli
-cargo build --release -p amux-gateway
-cargo build --release -p amux-mcp
-cargo build --release -p amux-protocol
+cargo build --release -p tamux-daemon
+cargo build --release -p tamux-cli
+cargo build --release -p tamux-gateway
+cargo build --release -p tamux-mcp
+cargo build --release -p tamux-protocol
 
 # Frontend web bundle
 cd frontend
@@ -258,18 +260,18 @@ Recommended component-level workflow:
 
 ```bash
 # Start the daemon (required for all clients)
-cargo run --release --bin amux-daemon
+cargo run --release --bin tamux-daemon
 
 # In another terminal, start the Electron app
 cd frontend
 npm run dev:electron
 
 # Or use the CLI directly
-cargo run --release --bin amux -- list
-cargo run --release --bin amux -- new --shell bash
-cargo run --release --bin amux -- attach <session-id>
-cargo run --release --bin amux -- kill <session-id>
-cargo run --release --bin amux -- ping
+cargo run --release --bin tamux -- list
+cargo run --release --bin tamux -- new --shell bash
+cargo run --release --bin tamux -- attach <session-id>
+cargo run --release --bin tamux -- kill <session-id>
+cargo run --release --bin tamux -- ping
 ```
 
 ### Electron Production Build
@@ -288,7 +290,7 @@ This produces platform packages in `frontend/release/`:
 Pinned guides:
 
 - [Building CDUI Components And Views With YAML](docs/cdui-yaml-views.md)
-- [Creating Your Own amux Plugin](docs/plugin-development.md)
+- [Creating Your Own tamux Plugin](docs/plugin-development.md)
 
 Frontend plugins are currently registered inside the React/Electron frontend and can contribute:
 
@@ -298,10 +300,10 @@ Frontend plugins are currently registered inside the React/Electron frontend and
 
 For packaged runtime plugins installed from npm or a local package directory:
 
-- install with `amux install plugin <npm-package-or-local-path>`
-- the package must declare `amuxPlugin.entry` in `package.json`
-- the entry must be a self-contained browser script that registers itself through `window.AmuxApi.registerPlugin(...)`
-- Electron preload loads installed plugin scripts from `~/.amux/plugins/registry.json` during app startup
+- install with `tamux install plugin <npm-package-or-local-path>`
+- the package should declare `tamuxPlugin.entry` in `package.json` (legacy `amuxPlugin.entry` is also accepted)
+- the entry must be a self-contained browser script that registers itself through `window.TamuxApi.registerPlugin(...)` or `window.AmuxApi.registerPlugin(...)`
+- Electron preload loads installed plugin scripts from `~/.tamux/plugins/registry.json` during app startup
 
 The core plugin entry points live in:
 
@@ -330,13 +332,13 @@ The assistant panel now also includes an `AI Training` surface with first-class 
 
 ### MCP Server Registration
 
-Register `amux-mcp` with Claude Code, Cursor, or any MCP-compatible client:
+Register `tamux-mcp` with Claude Code, Cursor, or any MCP-compatible client:
 
 ```json
 {
   "mcpServers": {
-    "amux": {
-      "command": "amux-mcp"
+    "tamux": {
+      "command": "tamux-mcp"
     }
   }
 }
@@ -350,11 +352,11 @@ Register `amux-mcp` with Claude Code, Cursor, or any MCP-compatible client:
 
 | Platform | Path |
 |---|---|
-| Linux | `~/.config/amux/config.json` |
-| macOS | `~/Library/Application Support/amux/config.json` |
-| Windows | `%APPDATA%\amux\config.json` |
+| Linux | `~/.config/tamux/config.json` |
+| macOS | `~/Library/Application Support/tamux/config.json` |
+| Windows | `%APPDATA%\tamux\config.json` |
 
-Data directory: `~/.amux/` on Unix, `%LOCALAPPDATA%\amux\` on Windows.
+Data directory: `~/.tamux/` on Unix, `%LOCALAPPDATA%\tamux\` on Windows. Existing `amux` directories are migrated forward when possible.
 
 ### Settings Panel
 

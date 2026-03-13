@@ -22,7 +22,7 @@ type SettingsPanelProps = {
 };
 
 /**
- * Full settings panel matching amux-windows SettingsWindow.
+ * Full settings panel matching tamux-windows SettingsWindow.
  * 6 sections: Appearance, Terminal, Behavior, Agent, Keyboard, About.
  */
 export function SettingsPanel({ style, className }: SettingsPanelProps = {}) {
@@ -49,8 +49,8 @@ export function SettingsPanel({ style, className }: SettingsPanelProps = {}) {
   useEffect(() => {
     if (open && systemFonts.length === 0) {
       // Load system fonts via Electron IPC
-      if (typeof window !== "undefined" && "amux" in window) {
-        (window as any).amux.getSystemFonts().then((fonts: string[]) => {
+      if (typeof window !== "undefined" && ("tamux" in window || "amux" in window)) {
+        ((window as any).tamux ?? (window as any).amux).getSystemFonts().then((fonts: string[]) => {
           setSystemFonts(fonts);
         });
       }
@@ -74,8 +74,12 @@ export function SettingsPanel({ style, className }: SettingsPanelProps = {}) {
       }
     };
 
+    window.addEventListener("tamux-open-settings-tab", handleOpenTab as EventListener);
     window.addEventListener("amux-open-settings-tab", handleOpenTab as EventListener);
-    return () => window.removeEventListener("amux-open-settings-tab", handleOpenTab as EventListener);
+    return () => {
+      window.removeEventListener("tamux-open-settings-tab", handleOpenTab as EventListener);
+      window.removeEventListener("amux-open-settings-tab", handleOpenTab as EventListener);
+    };
   }, []);
 
   if (!open) return null;

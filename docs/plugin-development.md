@@ -1,6 +1,6 @@
-# Creating Your Own amux Plugin
+# Creating Your Own tamux Plugin
 
-amux plugins are frontend-registered extensions. A plugin can contribute:
+tamux plugins are frontend-registered extensions. A plugin can contribute:
 
 - React components
 - command handlers
@@ -12,7 +12,7 @@ The core runtime is implemented in [frontend/src/plugins/PluginManager.ts](../fr
 
 ## Current Plugin Models
 
-amux now supports two plugin paths.
+tamux now supports two plugin paths.
 
 ### 1. In-Tree Plugins
 
@@ -27,13 +27,13 @@ This is the model used by the built-in coding-agents plugin.
 You can now install a packaged plugin with:
 
 ```bash
-amux install plugin <npm-package>
+tamux install plugin <npm-package>
 ```
 
 You can also install from a local package directory:
 
 ```bash
-amux install plugin ../my-amux-plugin
+tamux install plugin ../my-tamux-plugin
 ```
 
 This packaged path is a distribution layer on top of the same runtime plugin contract described here.
@@ -71,16 +71,16 @@ Important behavior:
 
 ## package.json Contract For npm Plugins
 
-Externally installed packages must expose an `amuxPlugin` field in `package.json`.
+Externally installed packages should expose a `tamuxPlugin` field in `package.json`. The legacy `amuxPlugin` field is still accepted for compatibility.
 
 Minimal example:
 
 ```json
 {
-  "name": "amux-plugin-example",
+  "name": "tamux-plugin-example",
   "version": "0.1.1",
-  "amuxPlugin": {
-    "entry": "dist/amux-plugin.js",
+  "tamuxPlugin": {
+    "entry": "dist/tamux-plugin.js",
     "format": "script"
   }
 }
@@ -92,9 +92,9 @@ Current rules:
 - only `format: "script"` is currently supported.
 - the entry file must be self-contained and executable in the renderer without further bundling.
 - plugin installers are run with `npm install --ignore-scripts`, so published packages must already contain their built entry assets.
-- the script should register itself through `window.AmuxApi.registerPlugin(...)`.
+- the script should register itself through `window.TamuxApi.registerPlugin(...)`. `window.AmuxApi.registerPlugin(...)` remains available as a compatibility alias.
 
-Installed package metadata is recorded under `~/.amux/plugins/registry.json`, and Electron preload loads those entries on app startup.
+Installed package metadata is recorded under `~/.tamux/plugins/registry.json`, and Electron preload loads those entries on app startup.
 
 ## Minimal Plugin Example
 
@@ -130,15 +130,15 @@ export const examplePlugin: Plugin = {
 };
 
 export function registerExamplePlugin(): void {
-  if (typeof window === "undefined" || !window.AmuxApi) {
+  if (typeof window === "undefined" || !(window.TamuxApi || window.AmuxApi)) {
     return;
   }
 
-  window.AmuxApi.registerPlugin(examplePlugin);
+  (window.TamuxApi ?? window.AmuxApi).registerPlugin(examplePlugin);
 }
 ```
 
-For an externally installed plugin, bundle that registration path into the script referenced by `amuxPlugin.entry` so the script self-registers when loaded.
+For an externally installed plugin, bundle that registration path into the script referenced by `tamuxPlugin.entry` so the script self-registers when loaded.
 
 ## Registering The Plugin
 
@@ -148,7 +148,7 @@ Pattern:
 
 1. Create a `registerMyPlugin()` function in your plugin module.
 2. Guard against duplicate registration.
-3. Call `window.AmuxApi.registerPlugin(...)`.
+3. Call `window.TamuxApi.registerPlugin(...)`.
 4. Import and invoke the registration function from app initialization.
 
 The coding-agents implementation in [frontend/src/plugins/coding-agents/registerPlugin.ts](../frontend/src/plugins/coding-agents/registerPlugin.ts) is the best current reference.
@@ -196,7 +196,7 @@ Plugins can ship YAML view documents through the `views` field.
 Runtime behavior:
 
 - each view entry is serialized to YAML,
-- stored under `~/.amux/views/plugins`,
+- stored under `~/.tamux/views/plugins`,
 - loaded by the CDUI loader after the base stack,
 - assigned an id of the form `plugin:<filename-without-extension>`.
 
@@ -266,13 +266,13 @@ Use the smallest validation loop that matches the plugin surface area:
 For an npm-distributed plugin package, also validate:
 
 - `npm pack` produces the expected bundle,
-- the published package contains the file referenced by `amuxPlugin.entry`,
-- `amux install plugin <path-or-package>` records the plugin in `~/.amux/plugins/registry.json`,
+- the published package contains the file referenced by `tamuxPlugin.entry` or the legacy `amuxPlugin.entry`,
+- `tamux install plugin <path-or-package>` records the plugin in `~/.tamux/plugins/registry.json`,
 - Electron startup loads the script without console errors.
 
 For YAML-backed plugin views, also verify that:
 
-- the persisted YAML appears under `~/.amux/views/plugins`,
+- the persisted YAML appears under `~/.tamux/views/plugins`,
 - the plugin view renders in CDUI mode,
 - every referenced component type resolves.
 

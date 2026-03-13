@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# amux release build for Windows via WSL cross-compilation
+# tamux release build for Windows via WSL cross-compilation
 #
 # This script cross-compiles from WSL to Windows (x86_64-pc-windows-gnu),
 # then builds the Electron app with optional code signing.
@@ -32,7 +32,7 @@ SIGN=0
 
 echo ""
 echo "============================================================"
-echo " amux Windows release build (WSL cross-compilation)"
+echo " tamux Windows release build (WSL cross-compilation)"
 echo "============================================================"
 
 # -----------------------------------------------------------
@@ -82,7 +82,7 @@ mkdir -p "$OUT_DIR"
 
 TARGET_DIR="$PROJECT_ROOT/target/$TARGET/release"
 
-for bin in amux-daemon amux amux-mcp amux-gateway; do
+for bin in tamux-daemon tamux tamux-mcp tamux-gateway; do
     if [[ -f "$TARGET_DIR/${bin}.exe" ]]; then
         cp "$TARGET_DIR/${bin}.exe" "$OUT_DIR/"
         echo "  Collected ${bin}.exe"
@@ -90,8 +90,8 @@ for bin in amux-daemon amux amux-mcp amux-gateway; do
 done
 
 # Copy daemon + CLI to frontend/dist for Electron
-cp "$OUT_DIR/amux-daemon.exe" "$PROJECT_ROOT/frontend/dist/" 2>/dev/null || true
-cp "$OUT_DIR/amux.exe" "$PROJECT_ROOT/frontend/dist/" 2>/dev/null || true
+cp "$OUT_DIR/tamux-daemon.exe" "$PROJECT_ROOT/frontend/dist/" 2>/dev/null || true
+cp "$OUT_DIR/tamux.exe" "$PROJECT_ROOT/frontend/dist/" 2>/dev/null || true
 
 # -----------------------------------------------------------
 # Step 4: Code signing (optional)

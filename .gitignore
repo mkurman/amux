@@ -29,9 +29,9 @@ Thumbs.db
 # Logs
 *.log
 *.tsbuildinfo
-dist-release/amux Setup 0.1.0.exe
-dist-release/amux-daemon.exe
-dist-release/amux-gateway.exe
-dist-release/amux-mcp.exe
-dist-release/amux-portable.exe
-dist-release/amux.exe
+dist-release/tamux Setup 0.1.0.exe
+dist-release/tamux-daemon.exe
+dist-release/tamux-gateway.exe
+dist-release/tamux-mcp.exe
+dist-release/tamux-portable.exe
+dist-release/tamux.exe

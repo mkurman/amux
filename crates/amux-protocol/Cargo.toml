@@ -1,7 +1,10 @@
 [package]
-name = "amux-protocol"
+name = "tamux-protocol"
 version.workspace = true
 edition.workspace = true
+
+[lib]
+name = "amux_protocol"
 
 [dependencies]
 serde = { workspace = true }

@@ -13,7 +13,7 @@ function WhatsAppConnector() {
     useEffect(() => {
         checkStatus();
 
-        const amux = (window as any).amux;
+        const amux = (window as any).tamux ?? (window as any).amux;
         const unsubQr = amux?.onWhatsAppQR?.((dataUrl: string) => {
             setQrDataUrl(dataUrl);
             setStatus("qr_ready");
@@ -45,7 +45,7 @@ function WhatsAppConnector() {
 
     async function checkStatus() {
         try {
-            const amux = (window as any).amux;
+            const amux = (window as any).tamux ?? (window as any).amux;
             if (!amux?.whatsappStatus) return;
             const result = await amux.whatsappStatus();
             setStatus(result.status);
@@ -59,7 +59,7 @@ function WhatsAppConnector() {
         setStatus("connecting");
         setError(null);
         try {
-            const amux = (window as any).amux;
+            const amux = (window as any).tamux ?? (window as any).amux;
             if (!amux?.whatsappConnect) {
                 setError("WhatsApp bridge not available. Install dependencies: npm install @whiskeysockets/baileys qrcode pino @hapi/boom");
                 setStatus("error");
@@ -206,11 +206,11 @@ export function GatewayTab({
                 <SettingRow label="Command Prefix">
                     <TextInput value={settings.gatewayCommandPrefix}
                         onChange={(value) => updateSetting("gatewayCommandPrefix", value)}
-                        placeholder="!amux" />
+                        placeholder="!tamux" />
                 </SettingRow>
                 <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, marginBottom: 12, lineHeight: 1.5 }}>
-                    The gateway bridges chat platforms to amux. The <code style={{ color: "var(--accent)" }}>amux-gateway</code> binary
-                    reads tokens from environment variables (<code>AMUX_SLACK_TOKEN</code>, <code>AMUX_TELEGRAM_TOKEN</code>, etc.)
+                    The gateway bridges chat platforms to tamux. The <code style={{ color: "var(--accent)" }}>tamux-gateway</code> binary
+                    reads tokens from environment variables (<code>TAMUX_SLACK_TOKEN</code>, <code>TAMUX_TELEGRAM_TOKEN</code>, etc.)
                     or from the values configured below.
                 </div>
             </Section>

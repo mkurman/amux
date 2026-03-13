@@ -1,4 +1,4 @@
-//! amux-mcp: An MCP (Model Context Protocol) server that exposes the amux
+//! tamux-mcp: An MCP (Model Context Protocol) server that exposes the tamux
 //! daemon's capabilities as tools over JSON-RPC stdio transport.
 //!
 //! Register this binary as an MCP server in Claude Code or other MCP clients:
@@ -6,8 +6,8 @@
 //! ```json
 //! {
 //!   "mcpServers": {
-//!     "amux": {
-//!       "command": "amux-mcp"
+//!     "tamux": {
+//!       "command": "tamux-mcp"
 //!     }
 //!   }
 //! }
@@ -99,7 +99,7 @@ fn tool_definitions() -> Value {
     serde_json::json!([
         {
             "name": "execute_command",
-            "description": "Execute a managed command inside a amux terminal session. The command runs in a sandboxed lane with approval gating, automatic snapshots, and telemetry.",
+            "description": "Execute a managed command inside a tamux terminal session. The command runs in a sandboxed lane with approval gating, automatic snapshots, and telemetry.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -203,7 +203,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "list_sessions",
-            "description": "List all active terminal sessions managed by the amux daemon.",
+            "description": "List all active terminal sessions managed by the tamux daemon.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -226,7 +226,7 @@ fn tool_definitions() -> Value {
 // Daemon IPC connection
 // ---------------------------------------------------------------------------
 
-/// Connect to the amux daemon and return a framed codec stream.
+/// Connect to the tamux daemon and return a framed codec stream.
 async fn connect_daemon() -> Result<
     Framed<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin, AmuxCodec>,
 > {
@@ -234,10 +234,10 @@ async fn connect_daemon() -> Result<
     {
         let runtime_dir =
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let path = std::path::PathBuf::from(runtime_dir).join("amux-daemon.sock");
+        let path = std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock");
         let stream = tokio::net::UnixStream::connect(&path)
             .await
-            .with_context(|| format!("cannot connect to amux daemon at {}", path.display()))?;
+            .with_context(|| format!("cannot connect to tamux daemon at {}", path.display()))?;
         Ok(Framed::new(stream, AmuxCodec))
     }
 
@@ -246,7 +246,7 @@ async fn connect_daemon() -> Result<
         let addr = amux_protocol::default_tcp_addr();
         let stream = tokio::net::TcpStream::connect(&addr)
             .await
-            .with_context(|| format!("cannot connect to amux daemon on {addr}"))?;
+            .with_context(|| format!("cannot connect to tamux daemon on {addr}"))?;
         Ok(Framed::new(stream, AmuxCodec))
     }
 }
@@ -589,7 +589,7 @@ fn handle_initialize(id: Option<Value>) -> JsonRpcResponse {
                 "tools": {}
             },
             "serverInfo": {
-                "name": "amux-mcp",
+                "name": "tamux-mcp",
                 "version": env!("CARGO_PKG_VERSION")
             }
         }),
@@ -715,7 +715,7 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    info!("amux-mcp server starting");
+    info!("tamux-mcp server starting");
 
     let mut reader = BufReader::new(tokio::io::stdin());
 
@@ -798,6 +798,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!("amux-mcp server stopped");
+    info!("tamux-mcp server stopped");
     Ok(())
 }

@@ -132,7 +132,7 @@ function createDefaultWorkspace(name?: string): Workspace {
 }
 
 function stopPaneSessions(paneIds: string[]) {
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.stopTerminalSession) return;
 
   for (const paneId of paneIds) {

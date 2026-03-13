@@ -6,8 +6,8 @@ const net = require('net');
 const fs = require('fs');
 const os = require('os');
 
-const DAEMON_NAME = 'amux-daemon';
-const CLI_NAME = process.platform === 'win32' ? 'amux-cli' : 'amux';
+const DAEMON_NAME = 'tamux-daemon';
+const CLI_NAME = 'tamux';
 const DAEMON_TCP_HOST = '127.0.0.1';
 const DAEMON_TCP_PORT = 17563;
 const MAX_TERMINAL_HISTORY_BYTES = 1024 * 1024;
@@ -624,21 +624,37 @@ function stopWhatsAppBridge() {
     }
 }
 
-function getAmuxDataDir() {
+function getLegacyAmuxDataDir() {
     if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
         return path.join(process.env.LOCALAPPDATA, 'amux');
     }
     return path.join(os.homedir(), '.amux');
 }
 
-function ensureAmuxDataDir() {
-    const dataDir = getAmuxDataDir();
+function getTamuxDataDir() {
+    if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+        return path.join(process.env.LOCALAPPDATA, 'tamux');
+    }
+    return path.join(os.homedir(), '.tamux');
+}
+
+function ensureTamuxDataDir() {
+    const dataDir = getTamuxDataDir();
+    const legacyDir = getLegacyAmuxDataDir();
+    if (!fs.existsSync(dataDir) && fs.existsSync(legacyDir)) {
+        try {
+            fs.mkdirSync(path.dirname(dataDir), { recursive: true });
+            fs.renameSync(legacyDir, dataDir);
+        } catch {
+            // Ignore migration failure and continue with the new directory.
+        }
+    }
     fs.mkdirSync(dataDir, { recursive: true });
     return dataDir;
 }
 
 function getVisionTempDir() {
-    const dir = path.join(ensureAmuxDataDir(), 'tmp', 'vision');
+    const dir = path.join(ensureTamuxDataDir(), 'tmp', 'vision');
     fs.mkdirSync(dir, { recursive: true });
     return dir;
 }
@@ -703,7 +719,7 @@ function saveVisionScreenshot(_event, payload = {}) {
 
 function configureChromiumRuntimePaths() {
     try {
-        const dataDir = ensureAmuxDataDir();
+        const dataDir = ensureTamuxDataDir();
         const userDataDir = path.join(dataDir, 'electron-profile');
         const cacheDir = path.join(dataDir, 'chromium-cache');
 
@@ -733,12 +749,12 @@ function resolveDataPath(relativePath) {
         throw new Error('A relative path is required.');
     }
 
-    const baseDir = path.resolve(ensureAmuxDataDir());
+    const baseDir = path.resolve(ensureTamuxDataDir());
     const normalized = path.normalize(relativePath).replace(/^(\.\.(\\|\/|$))+/, '');
     const targetPath = path.resolve(baseDir, normalized);
 
     if (targetPath !== baseDir && !targetPath.startsWith(`${baseDir}${path.sep}`)) {
-        throw new Error('Path escapes the amux data directory.');
+        throw new Error('Path escapes the tamux data directory.');
     }
 
     return targetPath;
@@ -796,14 +812,14 @@ function listDataDir(relativeDir = '') {
         const absolutePath = path.join(dirPath, entry.name);
         return {
             name: entry.name,
-            path: path.relative(ensureAmuxDataDir(), absolutePath).replace(/\\/g, '/'),
+            path: path.relative(ensureTamuxDataDir(), absolutePath).replace(/\\/g, '/'),
             isDirectory: entry.isDirectory(),
         };
     });
 }
 
 function getPluginsRootDir() {
-    const pluginsDir = path.join(ensureAmuxDataDir(), 'plugins');
+    const pluginsDir = path.join(ensureTamuxDataDir(), 'plugins');
     fs.mkdirSync(pluginsDir, { recursive: true });
     return pluginsDir;
 }
@@ -841,7 +857,7 @@ function resolveInstalledPluginEntryPath(entryPath) {
     const resolvedPath = path.resolve(entryPath);
 
     if (resolvedPath !== pluginsRoot && !resolvedPath.startsWith(`${pluginsRoot}${path.sep}`)) {
-        throw new Error('Installed plugin entry path escapes the amux plugins directory.');
+        throw new Error('Installed plugin entry path escapes the tamux plugins directory.');
     }
 
     return resolvedPath;
@@ -1001,7 +1017,7 @@ function revealDataPath(relativePath) {
 
 function logToFile(level, message, details) {
     try {
-        const logDir = getAmuxDataDir();
+        const logDir = getTamuxDataDir();
         fs.mkdirSync(logDir, { recursive: true });
         const line = [
             new Date().toISOString(),
@@ -1009,7 +1025,7 @@ function logToFile(level, message, details) {
             message,
             details ? JSON.stringify(details) : '',
         ].filter(Boolean).join(' ') + '\n';
-        fs.appendFileSync(path.join(logDir, 'amux-electron.log'), line, 'utf8');
+        fs.appendFileSync(path.join(logDir, 'tamux-electron.log'), line, 'utf8');
     } catch {
         // Ignore logging failures.
     }
@@ -1291,7 +1307,7 @@ async function startTerminalBridge(_event, options = {}) {
     const cliPath = getCliPath();
     if (!fs.existsSync(cliPath)) {
         logToFile('error', 'cli binary missing', { cliPath });
-        throw new Error(`amux CLI not found at ${cliPath}`);
+        throw new Error(`tamux CLI not found at ${cliPath}`);
     }
 
     const cols = Number.isFinite(options.cols) ? Math.max(2, Math.trunc(options.cols)) : 80;
@@ -1874,7 +1890,7 @@ function summarizeRuntimeReadiness(agent, available, checks, gatewayReachable) {
 
     if (agent.id === 'hermes') {
         if (existingChecks.length > 0) {
-            runtimeNotes.push('Hermes configuration was detected. Consider wiring amux-mcp into Hermes MCP settings for deeper integration.');
+            runtimeNotes.push('Hermes configuration was detected. Consider wiring tamux-mcp into Hermes MCP settings for deeper integration.');
             return { readiness: 'ready', runtimeNotes };
         }
 
@@ -2103,9 +2119,9 @@ function checkMcpHealth(_event, servers = {}) {
         : [];
 
     checks.push({
-        name: 'amux',
-        command: 'amux-mcp',
-        exists: commandExists('amux-mcp'),
+        name: 'tamux',
+        command: 'tamux-mcp',
+        exists: commandExists('tamux-mcp'),
     });
 
     for (const [name, value] of entries) {
@@ -2169,7 +2185,7 @@ function getDaemonEndpoint() {
         return { host: DAEMON_TCP_HOST, port: DAEMON_TCP_PORT };
     }
     const runtimeDir = process.env.XDG_RUNTIME_DIR || '/tmp';
-    return { path: path.join(runtimeDir, 'amux-daemon.sock') };
+    return { path: path.join(runtimeDir, 'tamux-daemon.sock') };
 }
 
 async function checkDaemonRunning() {
@@ -2187,14 +2203,14 @@ async function checkDaemonRunning() {
 
 async function spawnDaemon() {
     const isRunning = await checkDaemonRunning();
-    if (isRunning) { console.log('[amux] Daemon already running'); return true; }
+    if (isRunning) { console.log('[tamux] Daemon already running'); return true; }
 
     const daemonPath = getDaemonPath();
-    console.log('[amux] Spawning daemon:', daemonPath);
+    console.log('[tamux] Spawning daemon:', daemonPath);
     logToFile('info', 'spawning daemon', { daemonPath });
 
     if (!fs.existsSync(daemonPath)) {
-        console.error('[amux] Daemon binary not found at:', daemonPath);
+        console.error('[tamux] Daemon binary not found at:', daemonPath);
         logToFile('error', 'daemon binary missing', { daemonPath });
         return false;
     }
@@ -2204,7 +2220,7 @@ async function spawnDaemon() {
         cwd: path.dirname(daemonPath),
     });
     daemon.on('error', (err) => {
-        console.error('[amux] Daemon error:', err);
+        console.error('[tamux] Daemon error:', err);
         logToFile('error', 'daemon process error', { message: err.message });
     });
     daemon.unref();
@@ -2212,12 +2228,12 @@ async function spawnDaemon() {
     for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 250));
         if (await checkDaemonRunning()) {
-            console.log('[amux] Daemon ready');
+            console.log('[tamux] Daemon ready');
             logToFile('info', 'daemon ready');
             return true;
         }
     }
-    console.warn('[amux] Daemon did not become ready');
+    console.warn('[tamux] Daemon did not become ready');
     logToFile('error', 'daemon did not become ready');
     return false;
 }
@@ -2424,7 +2440,7 @@ function createWindow() {
             nodeIntegration: false, contextIsolation: true,
             webviewTag: true,
         },
-        title: 'amux',
+        title: 'tamux',
         icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
         backgroundColor: '#1e1e2e', show: false,
         opacity: 1,
@@ -2482,7 +2498,7 @@ function registerIpcHandlers() {
     ipcMain.handle('plugin-load-installed', () => loadInstalledPluginScripts());
     ipcMain.handle('diagnostics-check-lsp', checkLspHealth);
     ipcMain.handle('diagnostics-check-mcp', checkMcpHealth);
-    ipcMain.handle('persistence-get-data-dir', () => ensureAmuxDataDir());
+    ipcMain.handle('persistence-get-data-dir', () => ensureTamuxDataDir());
     ipcMain.handle('persistence-read-json', (_event, relativePath) => readJsonFile(relativePath));
     ipcMain.handle('persistence-write-json', (_event, relativePath, data) => writeJsonFile(relativePath, data));
     ipcMain.handle('persistence-read-text', (_event, relativePath) => readTextFile(relativePath));

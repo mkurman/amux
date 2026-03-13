@@ -1,6 +1,6 @@
 # Building CDUI Components And Views With YAML
 
-This guide covers the current CDUI path in amux: React components are registered in the frontend registry, and views compose those components through YAML documents.
+This guide covers the current CDUI path in tamux: React components are registered in the frontend registry, and views compose those components through YAML documents.
 
 ## What YAML Controls
 
@@ -34,9 +34,9 @@ The authoritative schema lives in [frontend/src/schemas/uiSchema.ts](../frontend
 There are two active view sources:
 
 1. Built-in views in [frontend/src/views](../frontend/src/views).
-2. Persisted user and plugin views under `~/.amux/views`.
+2. Persisted user and plugin views under `~/.tamux/views`.
 
-At runtime, amux loads bundled defaults from [frontend/src/views](../frontend/src/views), writes compact persisted copies to `~/.amux/views`, and then prefers the persisted version on later loads. Plugin views are loaded from `~/.amux/views/plugins`.
+At runtime, tamux loads bundled defaults from [frontend/src/views](../frontend/src/views), writes compact persisted copies to `~/.tamux/views`, and then prefers the persisted version on later loads. Plugin views are loaded from `~/.tamux/views/plugins`.
 
 The loader for this flow is [frontend/src/lib/cduiLoader.ts](../frontend/src/lib/cduiLoader.ts).
 
@@ -183,12 +183,12 @@ Use this loop:
 
 - `Unknown Component: X`: the YAML `type` name is not registered under that exact string.
 - Collapsed or invisible content: the surrounding shell is missing `flex: 1` or `minHeight: 0`.
-- View loads from the wrong version: the persisted YAML in `~/.amux/views` is overriding the bundled default.
-- Plugin view not appearing: the YAML was not persisted under `~/.amux/views/plugins` or failed schema validation.
+- View loads from the wrong version: the persisted YAML in `~/.tamux/views` is overriding the bundled default.
+- Plugin view not appearing: the YAML was not persisted under `~/.tamux/views/plugins` or failed schema validation.
 
 ## When To Use A Plugin Instead
 
-Use a core built-in view when the feature belongs to amux itself.
+Use a core built-in view when the feature belongs to tamux itself.
 
 Use a plugin when you want to ship a feature that contributes one or more of:
 

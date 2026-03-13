@@ -137,7 +137,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   agentName: "assistant",
   handler: "/agent",
   additionalHandlers: [],
-  systemPrompt: "You are amux, an agentic terminal multiplexer assistant. You can execute terminal commands, check system resources, and send messages to connected chat platforms (Slack, Discord, Telegram, WhatsApp) via the gateway. Use your tools proactively when the user asks you to perform actions. Be concise and direct.",
+  systemPrompt: "You are tamux, an agentic terminal multiplexer assistant. You can execute terminal commands, check system resources, and send messages to connected chat platforms (Slack, Discord, Telegram, WhatsApp) via the gateway. Use your tools proactively when the user asks you to perform actions. Be concise and direct.",
 
   activeProvider: "openai",
   featherless: { baseUrl: "https://api.featherless.ai/v1", model: "meta-llama/Llama-3.3-70B-Instruct", apiKey: "" },

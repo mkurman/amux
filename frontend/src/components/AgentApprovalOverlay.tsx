@@ -15,7 +15,7 @@ export function AgentApprovalOverlay({ style, className }: AgentApprovalOverlayP
   async function handleDecision(status: "approved-once" | "approved-session" | "denied") {
     if (!approval) return;
 
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (amux?.resolveManagedApproval) {
       const decision =
         status === "approved-session" ? "approve-session" : status === "denied" ? "deny" : "approve-once";

@@ -1,6 +1,6 @@
-//! amux-protocol: Shared message types and codec for daemon <-> client IPC.
+//! tamux-protocol: Shared message types and codec for daemon <-> client IPC.
 //!
-//! This crate defines the wire protocol used between the amux daemon and any
+//! This crate defines the wire protocol used between the tamux daemon and any
 //! client (Tauri UI, CLI, future multiplayer connections). Messages are
 //! length-prefixed bincode frames sent over the configured IPC transport.
 

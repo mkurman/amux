@@ -1,10 +1,10 @@
 [package]
-name = "amux-daemon"
+name = "tamux-daemon"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "amux-daemon"
+name = "tamux-daemon"
 path = "src/main.rs"
 
 [dependencies]

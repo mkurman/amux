@@ -132,7 +132,7 @@ export default function App() {
       )
     );
 
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     void amux?.setWindowOpacity?.(settings.opacity);
   }, [
     settings.themeName,
@@ -145,7 +145,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.onAppCommand) return;
 
     return amux.onAppCommand((command: string) => {
@@ -206,6 +206,9 @@ export default function App() {
             toggleSettings();
           }
           window.setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("tamux-open-settings-tab", {
+              detail: { tab: "about" },
+            }));
             window.dispatchEvent(new CustomEvent("amux-open-settings-tab", {
               detail: { tab: "about" },
             }));
@@ -241,7 +244,7 @@ export default function App() {
     text: string;
     replyTarget: string;
   }) => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     const settingsState = useSettingsStore.getState().settings;
     const agentState = useAgentStore.getState();
 
@@ -390,8 +393,8 @@ export default function App() {
         `provider=${provider}`,
         `channel=${channelId}`,
         `user=${username}${userId ? ` (${userId})` : ""}`,
-        "You are amux's terminal agent running inside the user's amux terminal environment.",
-        "You can use amux tools and terminal capabilities to help the user.",
+        "You are tamux's terminal agent running inside the user's tamux terminal environment.",
+        "You can use tamux tools and terminal capabilities to help the user.",
         "Respond as the same assistant and keep continuity for this provider thread.",
       ].join("\n");
 
@@ -620,7 +623,7 @@ export default function App() {
   }, [persistGatewayThreadMap]);
 
   useEffect(() => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.ensureSlackConnected || !amux?.onSlackMessage) return;
     if (!settings.gatewayEnabled || !settings.slackToken) return;
 
@@ -650,7 +653,7 @@ export default function App() {
   }, [handleInboundGatewayMessage, settings.gatewayEnabled, settings.slackToken]);
 
   useEffect(() => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.ensureTelegramConnected || !amux?.onTelegramMessage) return;
     if (!settings.gatewayEnabled || !settings.telegramToken) return;
 
@@ -678,7 +681,7 @@ export default function App() {
   }, [handleInboundGatewayMessage, settings.gatewayEnabled, settings.telegramToken]);
 
   useEffect(() => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.ensureDiscordConnected || !amux?.onDiscordMessage) return;
     if (!settings.gatewayEnabled || !settings.discordToken) return;
 
@@ -706,7 +709,7 @@ export default function App() {
   }, [handleInboundGatewayMessage, settings.discordToken, settings.gatewayEnabled]);
 
   useEffect(() => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.onWhatsAppMessage || !amux?.whatsappStatus) return;
     if (!settings.gatewayEnabled) return;
 

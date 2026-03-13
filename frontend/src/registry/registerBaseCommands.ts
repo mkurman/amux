@@ -47,6 +47,7 @@ export const registerBaseCommands = (): void => {
   registerCommand("view.toggleSnippets", withWorkspace((state) => state.toggleSnippetPicker()));
   registerCommand("view.toggleWebBrowser", withWorkspace((state) => state.toggleWebBrowser()));
   registerCommand("view.reloadCDUI", () => {
+    window.dispatchEvent(new Event("tamux-cdui-views-reload"));
     window.dispatchEvent(new Event("amux-cdui-views-reload"));
     return { ok: true };
   });
@@ -86,6 +87,7 @@ export const registerBaseCommands = (): void => {
     const persisted = await saveViewDocument(activeViewId, draft);
     if (persisted) {
       useViewBuilderStore.getState().replaceActiveViewDocument(persisted.document);
+      window.dispatchEvent(new Event("tamux-cdui-views-reload"));
       window.dispatchEvent(new Event("amux-cdui-views-reload"));
       return { ok: true, viewId: activeViewId };
     }
@@ -113,6 +115,7 @@ export const registerBaseCommands = (): void => {
     const reset = await rollbackViewToDefault(activeViewId);
     if (reset) {
       builderStore.replaceActiveViewDocument(reset.document);
+      window.dispatchEvent(new Event("tamux-cdui-views-reload"));
       window.dispatchEvent(new Event("amux-cdui-views-reload"));
       return { ok: true, viewId: activeViewId };
     }
@@ -187,6 +190,7 @@ export const registerBaseCommands = (): void => {
       state.toggleSettings();
     }
     window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("tamux-open-settings-tab", { detail: { tab: "about" } }));
       window.dispatchEvent(new CustomEvent("amux-open-settings-tab", { detail: { tab: "about" } }));
     }, 50);
     return { ok: true };

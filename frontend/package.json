@@ -1,5 +1,5 @@
 {
-  "name": "amux",
+  "name": "tamux",
   "private": true,
   "version": "0.1.1",
   "type": "module",
@@ -43,29 +43,29 @@
     "vite": "^6.0.0"
   },
   "build": {
-    "appId": "com.amux.terminal",
-    "productName": "amux",
+    "appId": "app.tamux.desktop",
+    "productName": "tamux",
     "directories": {
-      "output": "release"
+    "output": "release"
     },
-    "extraResources": [
-      {
-        "from": "dist/amux-daemon.exe",
-        "to": "bin/amux-daemon.exe"
-      },
-      {
-        "from": "dist/amux.exe",
-        "to": "bin/amux-cli.exe"
-      }
-    ],
     "files": [
-      "dist/**/*",
-      "electron/**/*"
+    "dist/**/*",
+    "electron/**/*"
     ],
     "win": {
       "target": [
         "portable",
         "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "dist/tamux-daemon.exe",
+          "to": "bin/tamux-daemon.exe"
+        },
+          {
+            "from": "dist/tamux.exe",
+            "to": "bin/tamux.exe"
+          }
       ],
       "icon": "assets/icon.ico"
     },
@@ -74,10 +74,20 @@
         "AppImage",
         "deb"
       ],
+      "extraResources": [
+        {
+          "from": "dist/tamux-daemon",
+          "to": "bin/tamux-daemon"
+        },
+        {
+          "from": "dist/tamux",
+          "to": "bin/tamux"
+        }
+      ],
       "icon": "assets/icon.ico"
     },
     "portable": {
-      "artifactName": "amux-portable.exe"
+      "artifactName": "tamux-portable.exe"
     }
   }
 }

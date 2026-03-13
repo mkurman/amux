@@ -78,7 +78,7 @@ async fn connect() -> Result<Framed<impl tokio::io::AsyncRead + tokio::io::Async
     {
         let runtime_dir =
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let path = std::path::PathBuf::from(runtime_dir).join("amux-daemon.sock");
+        let path = std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock");
         let stream = tokio::net::UnixStream::connect(&path)
             .await
             .with_context(|| format!("cannot connect to daemon at {}", path.display()))?;

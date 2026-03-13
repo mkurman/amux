@@ -66,8 +66,8 @@ export function CommandPalette({ style, className }: CommandPaletteProps = {}) {
     { id: "system-monitor", label: "System Monitor", category: "View", shortcut: shortcutFor("toggleSystemMonitor"), action: toggleSystemMonitor },
     { id: "execution-canvas", label: "Execution Canvas", category: "View", shortcut: shortcutFor("toggleCanvas"), action: toggleCanvas },
     { id: "time-travel", label: "Time Travel Snapshots", category: "View", shortcut: shortcutFor("toggleTimeTravel"), action: toggleTimeTravel },
-    { id: "verify-integrity", label: "Verify WORM Integrity", category: "Infrastructure", action: () => { (window as any).amux?.verifyIntegrity?.(); } },
-    { id: "reload-cdui-views", label: "Reload CDUI Views", category: "Infrastructure", action: () => window.dispatchEvent(new Event("amux-cdui-views-reload")) },
+    { id: "verify-integrity", label: "Verify WORM Integrity", category: "Infrastructure", action: () => { ((window as any).tamux ?? (window as any).amux)?.verifyIntegrity?.(); } },
+    { id: "reload-cdui-views", label: "Reload CDUI Views", category: "Infrastructure", action: () => { window.dispatchEvent(new Event("tamux-cdui-views-reload")); window.dispatchEvent(new Event("amux-cdui-views-reload")); } },
     { id: "generate-skill", label: "Generate Skill from History", category: "Infrastructure", action: toggleAgentPanel },
     { id: "toggle-sandbox", label: "Toggle Sandbox", category: "Infrastructure", action: () => updateSetting("sandboxEnabled", !settings.sandboxEnabled) },
     ...BUILTIN_THEMES.map((theme) => ({

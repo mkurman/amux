@@ -665,7 +665,7 @@ async function executeGatewayMessage(
   callId: string, name: string, platform: string, target: string, message: string,
 ): Promise<ToolResult> {
   // Gateway messages go through the amux-gateway daemon
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.executeManagedCommand) {
     return {
       toolCallId: callId, name,
@@ -700,7 +700,7 @@ async function executeDiscordMessage(
 ): Promise<ToolResult> {
   const settings = useSettingsStore.getState().settings;
   const token = settings.discordToken;
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
 
   if (!token) {
     return {
@@ -784,7 +784,7 @@ async function executeDiscordMessage(
 async function executeWhatsAppMessage(
   callId: string, name: string, phone: string, message: string,
 ): Promise<ToolResult> {
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.whatsappSend) {
     return {
       toolCallId: callId, name,
@@ -907,7 +907,7 @@ function createManagedCommandAwaiter(
   let cancel = () => { };
 
   const promise = new Promise<ManagedAwaitResult>((resolve) => {
-    const amux = (window as any).amux;
+    const amux = (window as any).tamux ?? (window as any).amux;
     if (!amux?.onTerminalEvent) {
       resolve({ status: "timeout" });
       return;
@@ -1387,7 +1387,7 @@ async function executeBrowserScreenshot(callId: string, name: string): Promise<T
   }
 
   const shot = await browser.captureScreenshot();
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.saveVisionScreenshot) {
     return { toolCallId: callId, name, content: "Error: Vision screenshot persistence is not available in this environment." };
   }
@@ -1430,7 +1430,7 @@ function executeReadTerminalContent(
 async function executeTerminalCommand(
   callId: string, name: string, command: string, paneId?: string,
 ): Promise<ToolResult> {
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.sendTerminalInput && !amux?.executeManagedCommand) {
     return { toolCallId: callId, name, content: "Error: Terminal bridge not available." };
   }
@@ -1529,7 +1529,7 @@ async function executeTerminalCommand(
 async function executeGetSystemInfo(
   callId: string, name: string,
 ): Promise<ToolResult> {
-  const amux = (window as any).amux;
+  const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.getSystemMonitorSnapshot) {
     return { toolCallId: callId, name, content: "Error: System monitor not available." };
   }

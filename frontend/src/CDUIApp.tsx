@@ -25,15 +25,18 @@ const EMBEDDED_VIEW_IDS = new Set([
   "agent-chat-panel",
 ]);
 
-const AMUX_LOADING_MARK = [
-  "                                 ___",
-  "   __ _ _ __ ___  _   ___  __   |_  |",
-  "  / _` | '_ ` _ \\| | | \\ \/ /     | |",
-  " | (_| | | | | | | |_| |>  <   ___| |",
-  "  \\__,_|_| |_| |_|\\__,_/_/\\_\\ |_____|",
+const TAMUX_LOADING_MARK = [
+  "  _                             ",
+  " | |_ __ _ _ __ ___  _   ___  __",
+  " | __/ _` | '_ ` _ \\| | | \\ \/ /",
+  " | || (_| | | | | | | |_| |>  < ",
+  "  \\__\\__,_|_| |_| |_|\\__,_/_/\\_\\",
   "",
-  "  Agentic Terminal Multiplexer",
+  "  Terminal Agentic Multiplexer",
 ].join("\n");
+
+const CDUI_PLUGIN_VIEWS_UPDATED_EVENTS = ["tamux-cdui-plugin-views-updated", "amux-cdui-plugin-views-updated"] as const;
+const CDUI_VIEWS_RELOAD_EVENTS = ["tamux-cdui-views-reload", "amux-cdui-views-reload"] as const;
 
 const CDUIApp = () => {
   const [views, setViews] = useState<LoadedCDUIView[] | null>(null);
@@ -64,7 +67,7 @@ const CDUIApp = () => {
       registerBaseCommands();
 
       try {
-        const pluginResults = await window.amux?.loadInstalledPlugins?.();
+        const pluginResults = await (window.tamux ?? window.amux)?.loadInstalledPlugins?.();
         if (Array.isArray(pluginResults)) {
           const failedOrSkipped = pluginResults.filter(
             (result) => result && (result.status === "error" || result.status === "skipped"),
@@ -99,18 +102,32 @@ const CDUIApp = () => {
   }, [syncLoadedViews, views]);
 
   useEffect(() => {
-    const onPluginViewsUpdated = () => {
-      void reloadViews();
-    };
-    const onManualViewsReload = () => {
-      void reloadViews();
+    // Collapse multiple same-tick events into a single reloadViews() invocation
+    let reloadScheduled = false;
+
+    const scheduleReload = () => {
+      if (reloadScheduled) {
+        return;
+      }
+      reloadScheduled = true;
+      window.setTimeout(() => {
+        reloadScheduled = false;
+        void reloadViews();
+      }, 0);
     };
 
-    window.addEventListener("amux-cdui-plugin-views-updated", onPluginViewsUpdated);
-    window.addEventListener("amux-cdui-views-reload", onManualViewsReload);
+    const onPluginViewsUpdated = () => {
+      scheduleReload();
+    };
+    const onManualViewsReload = () => {
+      scheduleReload();
+    };
+
+    CDUI_PLUGIN_VIEWS_UPDATED_EVENTS.forEach((eventName) => window.addEventListener(eventName, onPluginViewsUpdated));
+    CDUI_VIEWS_RELOAD_EVENTS.forEach((eventName) => window.addEventListener(eventName, onManualViewsReload));
     return () => {
-      window.removeEventListener("amux-cdui-plugin-views-updated", onPluginViewsUpdated);
-      window.removeEventListener("amux-cdui-views-reload", onManualViewsReload);
+      CDUI_PLUGIN_VIEWS_UPDATED_EVENTS.forEach((eventName) => window.removeEventListener(eventName, onPluginViewsUpdated));
+      CDUI_VIEWS_RELOAD_EVENTS.forEach((eventName) => window.removeEventListener(eventName, onManualViewsReload));
     };
   }, [reloadViews]);
 
@@ -209,7 +226,7 @@ const CDUIApp = () => {
             display: "grid",
             justifyItems: "center",
             gap: 20,
-            width: "min(100%, 720px)",
+            width: "min(100%, 820px)",
           }}
         >
           <pre
@@ -229,7 +246,7 @@ const CDUIApp = () => {
               textAlign: "left",
             }}
           >
-            {AMUX_LOADING_MARK}
+            {TAMUX_LOADING_MARK}
           </pre>
 
           <div style={{ display: "grid", justifyItems: "center", gap: 8 }}>

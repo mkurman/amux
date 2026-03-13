@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "amux", about = "amux terminal multiplexer CLI")]
+#[command(name = "tamux", about = "tamux terminal multiplexer CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -95,7 +95,7 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum InstallTarget {
-    /// Install an amux plugin from npm or a local package directory.
+    /// Install a tamux plugin from npm or a local package directory.
     Plugin {
         /// npm package spec or local package directory.
         package: String,
@@ -110,7 +110,8 @@ fn init_logging(log_file_name: &str) -> Result<tracing_appender::non_blocking::W
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("AMUX_LOG")
+            EnvFilter::try_from_env("TAMUX_LOG")
+                .or_else(|_| EnvFilter::try_from_env("AMUX_LOG"))
                 .unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_writer(writer)
@@ -118,7 +119,7 @@ fn init_logging(log_file_name: &str) -> Result<tracing_appender::non_blocking::W
         .init();
 
     std::panic::set_hook(Box::new(|panic_info| {
-        tracing::error!(panic = %panic_info, "amux-cli panicked");
+        tracing::error!(panic = %panic_info, "tamux-cli panicked");
     }));
 
     tracing::info!(path = %log_path.display(), "cli log file initialized");
@@ -129,11 +130,11 @@ fn init_logging(log_file_name: &str) -> Result<tracing_appender::non_blocking::W
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let log_file_name = match &cli.command {
-        Commands::Bridge { .. } => "amux-bridge.log",
-        _ => "amux-cli.log",
+        Commands::Bridge { .. } => "tamux-bridge.log",
+        _ => "tamux-cli.log",
     };
     let _log_guard = init_logging(log_file_name)?;
-    tracing::info!(command = ?cli.command, "amux-cli starting");
+    tracing::info!(command = ?cli.command, "tamux-cli starting");
 
     match cli.command {
         Commands::List => {
@@ -200,7 +201,7 @@ async fn main() -> Result<()> {
 
         Commands::StartDaemon => {
             println!("Starting daemon...");
-            let mut cmd = std::process::Command::new("amux-daemon");
+            let mut cmd = std::process::Command::new("tamux-daemon");
             cmd.stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());

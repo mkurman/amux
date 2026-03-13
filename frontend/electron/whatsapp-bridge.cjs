@@ -1,5 +1,5 @@
 /**
- * WhatsApp Web bridge sidecar for amux-gateway.
+ * WhatsApp Web bridge sidecar for tamux-gateway.
  *
  * Uses @whiskeysockets/baileys to connect to WhatsApp via the multi-device
  * protocol. Communicates with the Electron main process via JSON-RPC over
@@ -26,8 +26,8 @@ const pino = require('pino');
 // Auth state directory
 const AUTH_DIR = path.join(
     process.platform === 'win32' && process.env.LOCALAPPDATA
-        ? path.join(process.env.LOCALAPPDATA, 'amux')
-        : path.join(os.homedir(), '.amux'),
+        ? path.join(process.env.LOCALAPPDATA, 'tamux')
+        : path.join(os.homedir(), '.tamux'),
     'whatsapp-auth'
 );
 fs.mkdirSync(AUTH_DIR, { recursive: true });
@@ -70,7 +70,7 @@ async function connectWhatsApp() {
         },
         printQRInTerminal: false,
         logger,
-        browser: ['amux', 'Desktop', '1.0.0'],
+        browser: ['tamux', 'Desktop', '1.0.0'],
         generateHighQualityLinkPreview: false,
     });
 

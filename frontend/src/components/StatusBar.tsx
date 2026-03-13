@@ -35,7 +35,7 @@ export function StatusBar() {
     async function check() {
       try {
         if (typeof window !== "undefined" && "amux" in window) {
-          const ok = await (window as any).amux.checkDaemon();
+          const ok = await ((window as any).tamux ?? (window as any).amux).checkDaemon();
           setDaemonConnected(ok);
         }
       } catch {

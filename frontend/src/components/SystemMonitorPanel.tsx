@@ -27,7 +27,7 @@ export function SystemMonitorPanel({ style, className }: SystemMonitorPanelProps
         let timeoutId: number | undefined;
 
         const fetchSnapshot = async () => {
-            const amux = (window as any).amux;
+            const amux = (window as any).tamux ?? (window as any).amux;
             if (!amux?.getSystemMonitorSnapshot) {
                 if (active) {
                     setError("Native system monitoring is available in the desktop runtime.");

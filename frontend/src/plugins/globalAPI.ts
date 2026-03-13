@@ -7,11 +7,12 @@ import { PluginManager, type Plugin } from "./PluginManager";
 const PLUGIN_VIEWS_DIR = "views/plugins";
 
 const getPluginManager = (): PluginManager => {
-  if (!window.__amuxPluginManager) {
-    window.__amuxPluginManager = new PluginManager();
+  if (!window.__tamuxPluginManager && !window.__amuxPluginManager) {
+    window.__tamuxPluginManager = new PluginManager();
+    window.__amuxPluginManager = window.__tamuxPluginManager;
   }
 
-  return window.__amuxPluginManager;
+  return window.__tamuxPluginManager ?? window.__amuxPluginManager!;
 };
 
 const persistPluginViews = async (plugin: Plugin): Promise<void> => {
@@ -41,19 +42,22 @@ export interface AmuxPluginAPI {
 
 declare global {
   interface Window {
+    TamuxApi?: AmuxPluginAPI;
     AmuxApi?: AmuxPluginAPI;
+    __tamuxPluginManager?: PluginManager;
     __amuxPluginManager?: PluginManager;
   }
 }
 
 const pluginManager = getPluginManager();
 
-window.AmuxApi = {
+const pluginApi: AmuxPluginAPI = {
   registerComponent: ComponentRegistryAPI.register,
   registerCommand: CommandRegistryAPI.register,
   registerPlugin: (plugin: Plugin) => {
     pluginManager.registerPlugin(plugin);
     void persistPluginViews(plugin).then(() => {
+      window.dispatchEvent(new Event("tamux-cdui-plugin-views-updated"));
       window.dispatchEvent(new Event("amux-cdui-plugin-views-updated"));
     });
   },
@@ -64,5 +68,8 @@ window.AmuxApi = {
   getCommands: CommandRegistryAPI.list,
   getPlugins: () => pluginManager.listPlugins(),
 };
+
+window.TamuxApi = pluginApi;
+window.AmuxApi = pluginApi;
 
 export { pluginManager };

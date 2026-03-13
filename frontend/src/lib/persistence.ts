@@ -9,7 +9,7 @@ const pendingWrites = new Map<string, PendingWrite>();
 
 function getBridge(): AmuxBridge | undefined {
     if (typeof window === "undefined") return undefined;
-    return window.amux;
+    return window.tamux ?? window.amux;
 }
 
 function writeKey(kind: PendingWrite["kind"], relativePath: string): string {

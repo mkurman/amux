@@ -86,7 +86,7 @@ export function BehaviorTab({
 
     const runLspHealthCheck = async () => {
         try {
-            const result = await (window as any).amux?.checkLspHealth?.();
+            const result = await ((window as any).tamux ?? (window as any).amux)?.checkLspHealth?.();
             setLspHealth(result ?? null);
         } catch {
             setLspHealth(null);
@@ -101,7 +101,7 @@ export function BehaviorTab({
         }
         setMcpError(null);
         try {
-            const result = await (window as any).amux?.checkMcpHealth?.(parsed.servers);
+            const result = await ((window as any).tamux ?? (window as any).amux)?.checkMcpHealth?.(parsed.servers);
             setMcpHealth(Array.isArray(result) ? result : null);
         } catch {
             setMcpHealth(null);

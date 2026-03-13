@@ -70,16 +70,17 @@ function resolveWorkspaceSurfacePane(args: Record<string, unknown>) {
 let registered = false;
 
 export function registerCodingAgentsPlugin() {
-    if (registered || typeof window === "undefined" || !window.AmuxApi) {
+    const pluginApi = window.TamuxApi ?? window.AmuxApi;
+    if (registered || typeof window === "undefined" || !pluginApi) {
         return;
     }
 
-    if (window.AmuxApi.getPlugins().includes("coding-agents")) {
+    if (pluginApi.getPlugins().includes("coding-agents")) {
         registered = true;
         return;
     }
 
-    window.AmuxApi.registerPlugin({
+    pluginApi.registerPlugin({
         id: "coding-agents",
         name: "Coding Agents",
         version: "0.1.1",

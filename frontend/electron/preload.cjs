@@ -98,7 +98,7 @@ async function loadInstalledPlugins() {
     return results;
 }
 
-contextBridge.exposeInMainWorld('amux', {
+const bridgeApi = {
     getSocketPath: () => ipcRenderer.invoke('getSocketPath'),
     checkDaemon: () => ipcRenderer.invoke('checkDaemon'),
     spawnDaemon: () => ipcRenderer.invoke('spawnDaemon'),
@@ -220,4 +220,7 @@ contextBridge.exposeInMainWorld('amux', {
         ipcRenderer.on('whatsapp-message', listener);
         return () => ipcRenderer.removeListener('whatsapp-message', listener);
     },
-});
+};
+
+contextBridge.exposeInMainWorld('tamux', bridgeApi);
+contextBridge.exposeInMainWorld('amux', bridgeApi);

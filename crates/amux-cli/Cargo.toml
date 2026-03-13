@@ -1,10 +1,10 @@
 [package]
-name = "amux-cli"
+name = "tamux-cli"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "amux"
+name = "tamux"
 path = "src/main.rs"
 
 [dependencies]
