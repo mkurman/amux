@@ -9,17 +9,24 @@ blocks:
       editable: true
     defaults:
       visible: true
+      resizable: true
+      resizeAxis: "horizontal"
+      minWidth: 280
+      maxWidth: "80vw"
       style:
+        width: 440
+        maxWidth: 820
         display: "flex"
         flexDirection: "column"
         position: "relative"
         flexShrink: 0
         height: "100%"
         minHeight: 0
-        minWidth: 380
+        minWidth: 280
+        overflow: "hidden"
     layout:
       id: "blocks/dockedAgentPanelShell/layout"
-      use: "amux-primitive-box"
+      type: "AgentChatDockShell"
       builder:
         editable: true
   dockedAgentPanelFrame:
@@ -29,17 +36,13 @@ blocks:
       editable: true
     defaults:
       visible: true
-      resizable: true
-      resizeAxis: "horizontal"
-      minWidth: 380
-      maxWidth: "80vw"
       style:
-        width: 380
-        minWidth: 380
-        maxWidth: 820
+        width: "100%"
+        minWidth: 0
         height: "100%"
         display: "flex"
         flexDirection: "column"
+        flex: 1
         background: "var(--bg-primary)"
         border: "1px solid var(--border)"
         borderRadius: "var(--radius-xl)"

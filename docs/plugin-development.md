@@ -78,7 +78,7 @@ Minimal example:
 ```json
 {
   "name": "amux-plugin-example",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "amuxPlugin": {
     "entry": "dist/amux-plugin.js",
     "format": "script"
@@ -91,6 +91,7 @@ Current rules:
 - `entry` is required.
 - only `format: "script"` is currently supported.
 - the entry file must be self-contained and executable in the renderer without further bundling.
+- plugin installers are run with `npm install --ignore-scripts`, so published packages must already contain their built entry assets.
 - the script should register itself through `window.AmuxApi.registerPlugin(...)`.
 
 Installed package metadata is recorded under `~/.amux/plugins/registry.json`, and Electron preload loads those entries on app startup.
@@ -104,7 +105,7 @@ import ExamplePanel from "./ExamplePanel";
 export const examplePlugin: Plugin = {
   id: "example",
   name: "Example Plugin",
-  version: "0.1.0",
+  version: "0.1.1",
   components: {
     ExamplePanel,
   },
@@ -217,6 +218,10 @@ Each executor returns a tool result payload that the assistant runtime feeds bac
 This is the right extension point when your plugin should be directly invocable by the built-in assistant.
 
 The coding-agents plugin uses this path to expose discovery and launch operations.
+
+The built-in coding-agents plugin now also demonstrates a richer runtime-profile pattern for external tools such as Hermes, pi.dev, and OpenClaw: discovery is not limited to PATH presence, and can include config-path checks, setup guidance, launch modes, and local runtime health checks surfaced through Electron IPC.
+
+The new built-in `ai-training` plugin follows the same renderer/preload/main split, but uses a separate domain model because training integrations are not all plain CLIs. Prime Intellect Verifiers behaves like a training runtime, while AutoResearch and AutoRL are repository-bound workflows that require workspace path and file-shape checks in addition to global system prerequisites.
 
 ## Electron Bridges For System-Level Plugins
 

@@ -1,27 +1,128 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAgentMissionStore } from "../lib/agentMissionStore";
 import { useAgentStore } from "../lib/agentStore";
+import { useKeybindStore } from "../lib/keybindStore";
 import { useWorkspaceStore } from "../lib/workspaceStore";
+
+type TitleMenuItem = {
+  id: string;
+  label: string;
+  shortcut?: string;
+  tone?: "default" | "agent";
+  onSelect: () => void;
+};
+
+type TitleMenuGroup = {
+  id: string;
+  label: string;
+  items: TitleMenuItem[];
+};
 
 export function TitleBar() {
   const workspace = useWorkspaceStore((s) => s.activeWorkspace());
   const surface = useWorkspaceStore((s) => s.activeSurface());
+  const createWorkspace = useWorkspaceStore((s) => s.createWorkspace);
+  const createSurface = useWorkspaceStore((s) => s.createSurface);
+  const splitActive = useWorkspaceStore((s) => s.splitActive);
+  const toggleZoom = useWorkspaceStore((s) => s.toggleZoom);
+  const toggleSidebar = useWorkspaceStore((s) => s.toggleSidebar);
+  const toggleSettings = useWorkspaceStore((s) => s.toggleSettings);
+  const settingsOpen = useWorkspaceStore((s) => s.settingsOpen);
+  const toggleFileManager = useWorkspaceStore((s) => s.toggleFileManager);
+  const toggleSessionVault = useWorkspaceStore((s) => s.toggleSessionVault);
   const toggleCommandPalette = useWorkspaceStore((s) => s.toggleCommandPalette);
   const toggleCommandHistory = useWorkspaceStore((s) => s.toggleCommandHistory);
   const toggleCommandLog = useWorkspaceStore((s) => s.toggleCommandLog);
+  const toggleSnippets = useWorkspaceStore((s) => s.toggleSnippetPicker);
   const toggleAgentPanel = useWorkspaceStore((s) => s.toggleAgentPanel);
   const toggleSystemMonitor = useWorkspaceStore((s) => s.toggleSystemMonitor);
   const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
   const approvals = useAgentMissionStore((s) => s.approvals);
   const cognitiveEvents = useAgentMissionStore((s) => s.cognitiveEvents);
   const activeProvider = useAgentStore((s) => s.agentSettings.activeProvider);
+  const bindings = useKeybindStore((s) => s.bindings);
   const [platform, setPlatform] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const menuBarRef = useRef<HTMLDivElement | null>(null);
   const approvalCount = useMemo(
     () => approvals.filter((entry) => entry.status === "pending").length,
     [approvals],
   );
   const traceCount = cognitiveEvents.length;
+
+  const shortcutFor = useCallback(
+    (action: string): string | undefined => bindings.find((binding) => binding.action === action)?.combo,
+    [bindings],
+  );
+
+  const openAbout = useCallback(() => {
+    if (!settingsOpen) {
+      toggleSettings();
+    }
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("amux-open-settings-tab", {
+        detail: { tab: "about" },
+      }));
+    }, 50);
+  }, [settingsOpen, toggleSettings]);
+
+  const linuxMenus = useMemo<TitleMenuGroup[]>(() => [
+    {
+      id: "workspace",
+      label: "Workspace",
+      items: [
+        { id: "new-workspace", label: "New Workspace", shortcut: shortcutFor("newWorkspace"), onSelect: () => createWorkspace() },
+        { id: "new-surface", label: "New Surface", shortcut: shortcutFor("newSurface"), onSelect: () => createSurface() },
+        { id: "split-horizontal", label: "Split Horizontal", shortcut: shortcutFor("splitHorizontal"), onSelect: () => splitActive("horizontal") },
+        { id: "split-vertical", label: "Split Vertical", shortcut: shortcutFor("splitVertical"), onSelect: () => splitActive("vertical") },
+        { id: "toggle-zoom", label: "Zoom Pane", shortcut: shortcutFor("toggleZoom"), onSelect: toggleZoom },
+      ],
+    },
+    {
+      id: "panels",
+      label: "Panels",
+      items: [
+        { id: "mission", label: "Mission Console", shortcut: shortcutFor("toggleAgentPanel"), tone: "agent", onSelect: toggleAgentPanel },
+        { id: "monitor", label: "System Monitor", shortcut: shortcutFor("toggleSystemMonitor"), onSelect: toggleSystemMonitor },
+        { id: "files", label: "File Manager", shortcut: shortcutFor("toggleFileManager"), onSelect: toggleFileManager },
+        { id: "vault", label: "Session Vault", shortcut: shortcutFor("toggleSessionVault"), onSelect: toggleSessionVault },
+        { id: "settings", label: "Settings", shortcut: shortcutFor("toggleSettings"), onSelect: toggleSettings },
+        { id: "sidebar", label: "Toggle Sidebar", shortcut: shortcutFor("toggleSidebar"), onSelect: toggleSidebar },
+      ],
+    },
+    {
+      id: "tools",
+      label: "Tools",
+      items: [
+        { id: "palette", label: "Command Palette", shortcut: shortcutFor("toggleCommandPalette"), onSelect: toggleCommandPalette },
+        { id: "search", label: "Search", shortcut: shortcutFor("toggleSearch"), onSelect: toggleSearch },
+        { id: "history", label: "Command History", shortcut: shortcutFor("toggleCommandHistory"), onSelect: toggleCommandHistory },
+        { id: "logs", label: "Command Log", shortcut: shortcutFor("toggleCommandLog"), onSelect: toggleCommandLog },
+        { id: "snippets", label: "Snippets", shortcut: shortcutFor("toggleSnippets"), onSelect: toggleSnippets },
+        { id: "runtime", label: "Runtime Settings", onSelect: openAbout },
+      ],
+    },
+  ], [
+    createSurface,
+    createWorkspace,
+    openAbout,
+    shortcutFor,
+    splitActive,
+    toggleAgentPanel,
+    toggleCommandHistory,
+    toggleCommandLog,
+    toggleSnippets,
+
+    toggleCommandPalette,
+    toggleFileManager,
+    toggleSearch,
+    toggleSessionVault,
+    toggleSettings,
+    toggleSidebar,
+    toggleSystemMonitor,
+    toggleZoom,
+  ]);
 
   useEffect(() => {
     const amux = (window as any).amux;
@@ -37,6 +138,31 @@ export function TitleBar() {
 
     return cleanup;
   }, []);
+
+  useEffect(() => {
+    if (!openMenuId) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuBarRef.current?.contains(event.target as Node)) {
+        setOpenMenuId(null);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenMenuId(null);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [openMenuId]);
 
   const hasAmux = typeof window !== "undefined" && "amux" in window;
   if (!hasAmux) return null;
@@ -100,14 +226,98 @@ export function TitleBar() {
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
-        <ActionPill label="Mission" onClick={toggleAgentPanel} tone="agent" />
-        <ActionPill label="Monitor" onClick={toggleSystemMonitor} />
-        <ActionPill label="Palette" onClick={toggleCommandPalette} />
-        <ActionPill label="Search" onClick={toggleSearch} />
-        <ActionPill label="History" onClick={toggleCommandHistory} />
-        <ActionPill label="Logs" onClick={toggleCommandLog} />
-      </div>
+      {platform === "linux" ? (
+        <div
+          ref={menuBarRef}
+          style={{ display: "flex", alignItems: "stretch", gap: 2, WebkitAppRegion: "no-drag", position: "relative" } as React.CSSProperties}
+        >
+          {linuxMenus.map((menu) => (
+            <div key={menu.id} style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setOpenMenuId((current) => (current === menu.id ? null : menu.id))}
+                style={{
+                  height: 28,
+                  marginTop: 6,
+                  padding: "0 var(--space-3)",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid",
+                  borderColor: openMenuId === menu.id ? "var(--mission-border)" : "transparent",
+                  background: openMenuId === menu.id ? "var(--mission-soft)" : "transparent",
+                  color: openMenuId === menu.id ? "var(--text-primary)" : "var(--text-secondary)",
+                  fontSize: "var(--text-xs)",
+                  fontWeight: 600,
+                  letterSpacing: "0.03em",
+                }}
+              >
+                {menu.label}
+              </button>
+
+              {openMenuId === menu.id ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    left: 0,
+                    minWidth: 240,
+                    padding: "var(--space-2)",
+                    borderRadius: "var(--radius-lg)",
+                    border: "1px solid var(--glass-border)",
+                    background: "rgba(15, 18, 32, 0.98)",
+                    boxShadow: "0 18px 48px rgba(0, 0, 0, 0.35)",
+                    display: "grid",
+                    gap: 2,
+                    zIndex: 40,
+                  }}
+                >
+                  {menu.items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setOpenMenuId(null);
+                        item.onSelect();
+                      }}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "var(--space-3)",
+                        width: "100%",
+                        padding: "var(--space-2) var(--space-3)",
+                        borderRadius: "var(--radius-md)",
+                        background: item.tone === "agent" ? "var(--agent-soft)" : "transparent",
+                        color: item.tone === "agent" ? "var(--agent)" : "var(--text-primary)",
+                        textAlign: "left",
+                      }}
+                      onMouseEnter={(event) => {
+                        event.currentTarget.style.background = item.tone === "agent" ? "rgba(130, 170, 255, 0.2)" : "var(--bg-tertiary)";
+                      }}
+                      onMouseLeave={(event) => {
+                        event.currentTarget.style.background = item.tone === "agent" ? "var(--agent-soft)" : "transparent";
+                      }}
+                    >
+                      <span style={{ fontSize: "var(--text-sm)" }}>{item.label}</span>
+                      <span style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                        {item.shortcut ?? ""}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-1)", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+          <ActionPill label="Mission" onClick={toggleAgentPanel} tone="agent" />
+          <ActionPill label="Monitor" onClick={toggleSystemMonitor} />
+          <ActionPill label="Palette" onClick={toggleCommandPalette} />
+          <ActionPill label="Search" onClick={toggleSearch} />
+          <ActionPill label="History" onClick={toggleCommandHistory} />
+          <ActionPill label="Logs" onClick={toggleCommandLog} />
+        </div>
+      )}
 
       <div style={{ display: "flex", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <WindowButton label="─" onClick={() => amux.windowMinimize()} />

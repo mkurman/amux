@@ -1,5 +1,6 @@
+import { useEffect, useMemo, useState } from "react";
 import type { AgentThread } from "../../lib/agentStore";
-import { iconButtonStyle } from "./shared";
+import { DEFAULT_PAGE_SIZE, iconButtonStyle, inputStyle, PageSizeSelect, PaginationControls } from "./shared";
 
 export function ThreadList({
     threads,
@@ -14,28 +15,46 @@ export function ThreadList({
     onSelect: (t: AgentThread) => void;
     onDelete: (id: string) => void;
 }) {
+    const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+    const [page, setPage] = useState(1);
+    const [dateFilter, setDateFilter] = useState("");
+
+    const filteredThreads = useMemo(() => {
+        return threads.filter((thread) => {
+            if (!dateFilter) return true;
+            return new Date(thread.updatedAt).toISOString().slice(0, 10) === dateFilter;
+        });
+    }, [dateFilter, threads]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [threads, searchQuery, dateFilter, pageSize]);
+
+    const visibleThreads = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return filteredThreads.slice(start, start + pageSize);
+    }, [filteredThreads, page, pageSize]);
+
     return (
         <div style={{ height: "100%", overflow: "auto", padding: "var(--space-3)" }}>
-            <div style={{ marginBottom: "var(--space-3)" }}>
+            <div style={{ marginBottom: "var(--space-3)", display: "flex", gap: "var(--space-3)", flexWrap: "wrap", alignItems: "center" }}>
                 <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => onSearch(e.target.value)}
                     placeholder="Search threads..."
-                    style={{
-                        width: "100%",
-                        background: "var(--bg-secondary)",
-                        border: "1px solid var(--border)",
-                        borderRadius: "var(--radius-md)",
-                        color: "var(--text-primary)",
-                        fontSize: "var(--text-sm)",
-                        padding: "var(--space-2) var(--space-3)",
-                        outline: "none",
-                    }}
+                    style={{ ...inputStyle, minWidth: 220 }}
                 />
+                <input
+                    type="date"
+                    value={dateFilter}
+                    onChange={(event) => setDateFilter(event.target.value)}
+                    style={{ ...inputStyle, flex: "0 0 auto", minWidth: 170 }}
+                />
+                <PageSizeSelect value={pageSize} onChange={setPageSize} />
             </div>
 
-            {threads.length === 0 && (
+            {filteredThreads.length === 0 && (
                 <div className="amux-empty-state">
                     <div className="amux-empty-state__icon">💬</div>
                     <div className="amux-empty-state__title">No conversations yet</div>
@@ -44,7 +63,7 @@ export function ThreadList({
             )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                {threads.map((t) => (
+                {visibleThreads.map((t) => (
                     <div
                         key={t.id}
                         onClick={() => onSelect(t)}
@@ -122,6 +141,15 @@ export function ThreadList({
                         </div>
                     </div>
                 ))}
+            </div>
+
+            <div style={{ marginTop: "var(--space-3)" }}>
+                <PaginationControls
+                    page={page}
+                    pageSize={pageSize}
+                    totalItems={filteredThreads.length}
+                    onPageChange={setPage}
+                />
             </div>
         </div>
     );

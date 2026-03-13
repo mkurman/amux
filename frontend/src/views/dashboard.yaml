@@ -103,6 +103,8 @@ layout:
                   flexDirection: "column"
                   height: "100%"
                   minHeight: 0
+                  minWidth: 180
+                  maxWidth: 520
                   alignSelf: "stretch"
               builder:
                 editable: true

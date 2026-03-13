@@ -1,8 +1,8 @@
-import { createUnavailableCodingAgents } from "./agentDefinitions";
+import { KNOWN_CODING_AGENT_DEFINITIONS, createUnavailableCodingAgents } from "./agentDefinitions";
 import type { DiscoveredCodingAgent } from "./types";
 
 type CodingAgentsBridge = {
-    discoverCodingAgents?: () => Promise<DiscoveredCodingAgent[]>;
+    discoverCodingAgents?: () => Promise<AmuxCodingAgentDiscoveryResult[]>;
     sendTerminalInput?: (paneId: string | null, data: string) => Promise<boolean>;
 };
 
@@ -11,7 +11,7 @@ function getBridge(): CodingAgentsBridge | null {
         return null;
     }
 
-    return ((window as unknown as { amux?: CodingAgentsBridge }).amux ?? null);
+    return window.amux ?? null;
 }
 
 export function encodeTerminalInput(text: string): string {
@@ -30,7 +30,25 @@ export async function discoverCodingAgents(): Promise<DiscoveredCodingAgent[]> {
     }
 
     try {
-        return await bridge.discoverCodingAgents();
+        const discovered = await bridge.discoverCodingAgents();
+        const discoveredById = new Map(discovered.map((agent) => [agent.id, agent]));
+
+        return KNOWN_CODING_AGENT_DEFINITIONS.map((definition) => {
+            const match = discoveredById.get(definition.id);
+            return {
+                ...definition,
+                available: match?.available ?? false,
+                executable: match?.executable ?? definition.executables[0] ?? null,
+                path: match?.path ?? null,
+                version: match?.version ?? null,
+                readiness: match?.readiness ?? (match?.available ? "ready" : "missing"),
+                checks: match?.checks ?? [],
+                runtimeNotes: match?.runtimeNotes ?? [],
+                gatewayLabel: match?.gatewayLabel ?? null,
+                gatewayReachable: match?.gatewayReachable ?? null,
+                error: match?.error ?? (match?.available ? null : "Not found on PATH."),
+            } satisfies DiscoveredCodingAgent;
+        });
     } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to discover coding agents.";
         return createUnavailableCodingAgents(message);

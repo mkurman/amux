@@ -1,9 +1,7 @@
 import { create } from "zustand";
 import {
-    readLegacyLocalStorageJson,
     readPersistedJson,
     scheduleJsonWrite,
-    writeLegacyLocalStorageJson,
 } from "./persistence";
 
 export interface SshProfile {
@@ -27,7 +25,6 @@ interface FileManagerState {
     hydrateProfiles: (profiles: SshProfile[]) => void;
 }
 
-const STORAGE_KEY = "amux_file_manager";
 const FILE_NAME = "file-manager.json";
 
 let profileCounter = 0;
@@ -66,13 +63,10 @@ function normalizeProfiles(input: unknown): SshProfile[] {
 
 function persistProfiles(profiles: SshProfile[]) {
     const payload = { sshProfiles: profiles };
-    writeLegacyLocalStorageJson(STORAGE_KEY, payload);
     scheduleJsonWrite(FILE_NAME, payload, 250);
 }
 
-const initialProfiles = normalizeProfiles(
-    readLegacyLocalStorageJson<{ sshProfiles?: SshProfile[] }>(STORAGE_KEY)?.sshProfiles ?? []
-);
+const initialProfiles: SshProfile[] = [];
 
 export const useFileManagerStore = create<FileManagerState>((set, get) => ({
     sshProfiles: initialProfiles,

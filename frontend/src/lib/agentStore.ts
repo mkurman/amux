@@ -250,35 +250,7 @@ export function clearThreadAbortController(threadId: string, controller?: AbortC
 let _threadId = 0;
 let _msgId = 0;
 
-const STORAGE_KEY = "amux_agent_settings";
-
 function loadAgentSettings(): AgentSettings {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<AgentSettings>;
-      return {
-        ...DEFAULT_AGENT_SETTINGS,
-        ...parsed,
-        featherless: { ...DEFAULT_AGENT_SETTINGS.featherless, ...(parsed.featherless ?? {}) },
-        openai: { ...DEFAULT_AGENT_SETTINGS.openai, ...(parsed.openai ?? {}) },
-        anthropic: { ...DEFAULT_AGENT_SETTINGS.anthropic, ...(parsed.anthropic ?? {}) },
-        qwen: { ...DEFAULT_AGENT_SETTINGS.qwen, ...(parsed.qwen ?? {}) },
-        "qwen-deepinfra": { ...DEFAULT_AGENT_SETTINGS["qwen-deepinfra"], ...(parsed["qwen-deepinfra"] ?? {}) },
-        kimi: { ...DEFAULT_AGENT_SETTINGS.kimi, ...(parsed.kimi ?? {}) },
-        "z.ai": { ...DEFAULT_AGENT_SETTINGS["z.ai"], ...(parsed["z.ai"] ?? {}) },
-        openrouter: { ...DEFAULT_AGENT_SETTINGS.openrouter, ...(parsed.openrouter ?? {}) },
-        cerebras: { ...DEFAULT_AGENT_SETTINGS.cerebras, ...(parsed.cerebras ?? {}) },
-        together: { ...DEFAULT_AGENT_SETTINGS.together, ...(parsed.together ?? {}) },
-        groq: { ...DEFAULT_AGENT_SETTINGS.groq, ...(parsed.groq ?? {}) },
-        ollama: { ...DEFAULT_AGENT_SETTINGS.ollama, ...(parsed.ollama ?? {}) },
-        chutes: { ...DEFAULT_AGENT_SETTINGS.chutes, ...(parsed.chutes ?? {}) },
-        huggingface: { ...DEFAULT_AGENT_SETTINGS.huggingface, ...(parsed.huggingface ?? {}) },
-        minimax: { ...DEFAULT_AGENT_SETTINGS.minimax, ...(parsed.minimax ?? {}) },
-        custom: { ...DEFAULT_AGENT_SETTINGS.custom, ...(parsed.custom ?? {}) },
-      };
-    }
-  } catch { /* ignore */ }
   return { ...DEFAULT_AGENT_SETTINGS };
 }
 
@@ -292,7 +264,6 @@ type AgentChatState = {
 };
 
 function saveAgentSettings(s: AgentSettings) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch { /* ignore */ }
   scheduleJsonWrite(AGENT_SETTINGS_FILE, s);
 }
 
@@ -321,11 +292,6 @@ function syncChatCounters(chat: AgentChatState) {
 }
 
 function saveChatState(chat: AgentChatState) {
-  try {
-    localStorage.setItem("amux_agent_chat", JSON.stringify(chat));
-  } catch {
-    // Ignore storage failures.
-  }
   scheduleJsonWrite(AGENT_CHAT_FILE, chat, 200);
 }
 
@@ -530,29 +496,10 @@ export async function hydrateAgentStore(): Promise<void> {
       custom: { ...DEFAULT_AGENT_SETTINGS.custom, ...(diskState.custom ?? {}) },
     };
     useAgentStore.setState({ agentSettings: merged });
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch { /* ignore */ }
-  } else {
-    // No disk state — migrate localStorage to disk if present
-    const localSettings = loadAgentSettings();
-    const hasLocalData = localSettings.activeProvider !== DEFAULT_AGENT_SETTINGS.activeProvider
-      || localSettings.agentName !== DEFAULT_AGENT_SETTINGS.agentName
-      || localSettings.enabled !== DEFAULT_AGENT_SETTINGS.enabled;
-    if (hasLocalData) {
-      scheduleJsonWrite(AGENT_SETTINGS_FILE, localSettings, 0);
-    }
   }
 
   const diskChat = await readPersistedJson<AgentChatState>(AGENT_CHAT_FILE);
-  const localChat = (() => {
-    try {
-      const raw = localStorage.getItem("amux_agent_chat");
-      return raw ? (JSON.parse(raw) as AgentChatState) : null;
-    } catch {
-      return null;
-    }
-  })();
-
-  const chat = diskChat ?? localChat;
+  const chat = diskChat;
   if (!chat || !Array.isArray(chat.threads) || !chat.messages || typeof chat.messages !== "object") {
     return;
   }

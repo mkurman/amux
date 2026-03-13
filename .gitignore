@@ -28,6 +28,7 @@ Thumbs.db
 
 # Logs
 *.log
+*.tsbuildinfo
 dist-release/amux Setup 0.1.0.exe
 dist-release/amux-daemon.exe
 dist-release/amux-gateway.exe

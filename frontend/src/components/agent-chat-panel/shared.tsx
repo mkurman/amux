@@ -1,11 +1,14 @@
 import type React from "react";
 
+export const DEFAULT_PAGE_SIZE = 5;
+export const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
+
 export function MetricRibbon({ items }: { items: Array<{ label: string; value: string; accent?: string }> }) {
     return (
         <div
             style={{
                 display: "grid",
-                gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))`,
+                gridTemplateColumns: `repeat(${Math.min(2, items.length)}, minmax(0, 1fr))`,
                 gap: "var(--space-3)",
                 marginBottom: "var(--space-4)",
             }}
@@ -64,7 +67,7 @@ export function EmptyPanel({ message }: { message: string }) {
     );
 }
 
-export function ContextCard({ label, value }: { label: string; value: string }) {
+export function ContextCard({ label, value, href }: { label: string; value: string; href?: string }) {
     return (
         <div
             style={{
@@ -75,7 +78,26 @@ export function ContextCard({ label, value }: { label: string; value: string }) 
             }}
         >
             <div className="amux-panel-title">{label}</div>
-            <div style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-1)", wordBreak: "break-word" }}>{value}</div>
+            {href ? (
+                <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                        display: "block",
+                        fontSize: "var(--text-sm)",
+                        marginTop: "var(--space-1)",
+                        wordBreak: "break-word",
+                        color: "var(--accent)",
+                        textDecoration: "underline",
+                        textUnderlineOffset: 2,
+                    }}
+                >
+                    {value}
+                </a>
+            ) : (
+                <div style={{ fontSize: "var(--text-sm)", marginTop: "var(--space-1)", wordBreak: "break-word" }}>{value}</div>
+            )}
         </div>
     );
 }
@@ -144,3 +166,72 @@ export const inputStyle: React.CSSProperties = {
     padding: "var(--space-2) var(--space-3)",
     fontSize: "var(--text-sm)",
 };
+
+export function PageSizeSelect({
+    value,
+    onChange,
+    label = "Per page",
+}: {
+    value: number;
+    onChange: (value: number) => void;
+    label?: string;
+}) {
+    return (
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+            <span>{label}</span>
+            <select
+                value={value}
+                onChange={(event) => onChange(Number(event.target.value))}
+                style={{
+                    ...inputStyle,
+                    flex: "0 0 auto",
+                    width: 88,
+                    padding: "6px 8px",
+                    fontSize: "var(--text-xs)",
+                }}
+            >
+                {PAGE_SIZE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                ))}
+            </select>
+        </label>
+    );
+}
+
+export function PaginationControls({
+    page,
+    pageSize,
+    totalItems,
+    onPageChange,
+}: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    onPageChange: (page: number) => void;
+}) {
+    const totalPages = Math.max(1, Math.ceil(totalItems / Math.max(1, pageSize)));
+
+    if (totalItems <= pageSize) {
+        return (
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                {totalItems} item{totalItems === 1 ? "" : "s"}
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-muted)" }}>
+                Page {page} of {totalPages} · {totalItems} items
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                <ActionButton onClick={page > 1 ? () => onPageChange(page - 1) : undefined}>
+                    Prev
+                </ActionButton>
+                <ActionButton onClick={page < totalPages ? () => onPageChange(page + 1) : undefined}>
+                    Next
+                </ActionButton>
+            </div>
+        </div>
+    );
+}

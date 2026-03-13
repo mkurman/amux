@@ -83,10 +83,10 @@ export function Sidebar() {
     <div
       ref={sidebarRef}
       style={{
-        width: sidebarWidth,
-        minWidth: 200,
-        maxWidth: 400,
         height: "100%",
+        width: `${sidebarWidth}px`,
+        minWidth: `${sidebarWidth}px`,
+        maxWidth: `${sidebarWidth}px`,
         minHeight: 0,
         background: "var(--bg-primary)",
         borderRight: "1px solid var(--border)",

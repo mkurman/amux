@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppContext, defaultAppState } from "./context/AppContext";
 import { ViewBuilderOverlay } from "./components/ViewBuilderOverlay";
+import { LoadingState } from "./components/LoadingState";
 import {
   compileViewDocument,
   loadCDUIViewStack,
@@ -14,6 +15,7 @@ import { ViewErrorBoundary } from "./renderers/ViewErrorBoundary";
 import { registerBaseCommands } from "./registry/registerBaseCommands";
 import { registerBaseComponents } from "./registry/registerBaseComponents";
 import { isCDUIViewVisible, useCDUIVisibilityFlags } from "./lib/cduiVisibility";
+import { registerAITrainingPlugin } from "./plugins/ai-training/registerPlugin";
 import { registerCodingAgentsPlugin } from "./plugins/coding-agents/registerPlugin";
 
 const EMBEDDED_VIEW_IDS = new Set([
@@ -22,6 +24,16 @@ const EMBEDDED_VIEW_IDS = new Set([
   "web-browser-panel",
   "agent-chat-panel",
 ]);
+
+const AMUX_LOADING_MARK = [
+  "                                 ___",
+  "   __ _ _ __ ___  _   ___  __   |_  |",
+  "  / _` | '_ ` _ \\| | | \\ \/ /     | |",
+  " | (_| | | | | | | |_| |>  <   ___| |",
+  "  \\__,_|_| |_| |_|\\__,_/_/\\_\\ |_____|",
+  "",
+  "  Agentic Terminal Multiplexer",
+].join("\n");
 
 const CDUIApp = () => {
   const [views, setViews] = useState<LoadedCDUIView[] | null>(null);
@@ -52,12 +64,21 @@ const CDUIApp = () => {
       registerBaseCommands();
 
       try {
-        await window.amux?.loadInstalledPlugins?.();
+        const pluginResults = await window.amux?.loadInstalledPlugins?.();
+        if (Array.isArray(pluginResults)) {
+          const failedOrSkipped = pluginResults.filter(
+            (result) => result && (result.status === "error" || result.status === "skipped"),
+          );
+          if (failedOrSkipped.length > 0) {
+            console.warn("Some installed plugins failed to load", failedOrSkipped);
+          }
+        }
       } catch (pluginLoadError) {
         console.error("Failed to load installed plugins", pluginLoadError);
       }
 
       registerCodingAgentsPlugin();
+      registerAITrainingPlugin();
 
       if (!cancelled) {
         await reloadViews();
@@ -172,7 +193,61 @@ const CDUIApp = () => {
   }
 
   if (!views || !renderedViews) {
-    return <div style={{ padding: 16 }}>Loading CDUI...</div>;
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          background: "radial-gradient(circle at top, rgba(34, 211, 238, 0.08), transparent 34%), var(--bg-primary)",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            justifyItems: "center",
+            gap: 20,
+            width: "min(100%, 720px)",
+          }}
+        >
+          <pre
+            style={{
+              margin: 0,
+              padding: "24px 28px",
+              maxWidth: "100%",
+              overflowX: "auto",
+              borderRadius: "var(--radius-xl)",
+              border: "1px solid var(--glass-border)",
+              background: "linear-gradient(180deg, rgba(15, 21, 32, 0.96), rgba(10, 15, 24, 0.98))",
+              boxShadow: "0 24px 80px rgba(0, 0, 0, 0.36)",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "clamp(10px, 1.25vw, 14px)",
+              lineHeight: 1.3,
+              textAlign: "left",
+            }}
+          >
+            {AMUX_LOADING_MARK}
+          </pre>
+
+          <div style={{ display: "grid", justifyItems: "center", gap: 8 }}>
+            <LoadingState variant="spinner" size={22} />
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "var(--text-secondary)",
+              }}
+            >
+              Loading CDUI...
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

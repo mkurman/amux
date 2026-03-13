@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { allLeafIds } from "../../lib/bspTree";
 import { useWorkspaceStore } from "../../lib/workspaceStore";
-import { buildCodingAgentInstallCommand, buildCodingAgentLaunchCommand, getCodingAgentLaunchMode } from "./agentDefinitions";
-import { discoverCodingAgents, sendCommandToPane } from "./bridge";
-import type { CodingAgentsDiscoveryStatus, DiscoveredCodingAgent } from "./types";
+import { buildAITrainingInstallCommand, buildAITrainingLaunchCommand, getAITrainingLaunchMode } from "./definitions";
+import { discoverAITrainingProfiles, sendCommandToPane } from "./bridge";
+import type { AITrainingDiscoveryStatus, DiscoveredAITraining } from "./types";
 
 type LaunchTarget = {
     workspaceId: string;
@@ -11,11 +11,11 @@ type LaunchTarget = {
     paneId: string;
 };
 
-type CodingAgentsState = {
-    agents: DiscoveredCodingAgent[];
-    status: CodingAgentsDiscoveryStatus;
+type AITrainingState = {
+    profiles: DiscoveredAITraining[];
+    status: AITrainingDiscoveryStatus;
     error: string | null;
-    selectedAgentId: string | null;
+    selectedProfileId: string | null;
     selectedWorkspaceId: string | null;
     selectedSurfaceId: string | null;
     selectedPaneId: string | null;
@@ -27,23 +27,19 @@ type CodingAgentsState = {
     installState: "idle" | "installing" | "success" | "error";
     installError: string | null;
     lastInstallCommand: string | null;
-    refreshAgents: () => Promise<void>;
-    setSelectedAgentId: (agentId: string | null) => void;
+    refreshProfiles: (workspaceId?: string | null) => Promise<void>;
+    setSelectedProfileId: (profileId: string | null) => void;
     setSelectedWorkspaceId: (workspaceId: string | null) => void;
     setSelectedSurfaceId: (surfaceId: string | null) => void;
     setSelectedPaneId: (paneId: string | null) => void;
-    setSelectedLaunchModeId: (launchModeId: string | null) => void;
+    setSelectedLaunchModeId: (modeId: string | null) => void;
     setLaunchPrompt: (launchPrompt: string) => void;
     syncTargetSelection: (workspaceId: string | null, surfaceId: string | null, paneId: string | null) => void;
-    launchSelectedAgent: () => Promise<boolean>;
-    installSelectedAgent: () => Promise<boolean>;
+    launchSelectedProfile: () => Promise<boolean>;
+    installSelectedProfile: () => Promise<boolean>;
 };
 
-function resolveLaunchTarget(
-    workspaceId: string | null,
-    surfaceId: string | null,
-    paneId: string | null,
-): LaunchTarget | null {
+function resolveLaunchTarget(workspaceId: string | null, surfaceId: string | null, paneId: string | null): LaunchTarget | null {
     const store = useWorkspaceStore.getState();
     const workspace = (workspaceId
         ? store.workspaces.find((entry) => entry.id === workspaceId)
@@ -76,27 +72,34 @@ function resolveLaunchTarget(
     };
 }
 
-function pickDefaultAgent(agents: DiscoveredCodingAgent[], currentAgentId: string | null): string | null {
-    if (currentAgentId && agents.some((agent) => agent.id === currentAgentId)) {
-        return currentAgentId;
-    }
-
-    return agents.find((agent) => agent.available)?.id ?? agents[0]?.id ?? null;
+function resolveWorkspacePath(workspaceId: string | null): string | null {
+    const store = useWorkspaceStore.getState();
+    const workspace = (workspaceId ? store.workspaces.find((entry) => entry.id === workspaceId) : undefined) ?? store.activeWorkspace();
+    const cwd = workspace?.cwd?.trim();
+    return cwd ? cwd : null;
 }
 
-function pickDefaultLaunchMode(agent: DiscoveredCodingAgent | null, currentLaunchModeId: string | null): string | null {
-    if (!agent) {
+function pickDefaultProfile(profiles: DiscoveredAITraining[], currentId: string | null): string | null {
+    if (currentId && profiles.some((profile) => profile.id === currentId)) {
+        return currentId;
+    }
+
+    return profiles.find((profile) => profile.available)?.id ?? profiles[0]?.id ?? null;
+}
+
+function pickDefaultLaunchMode(profile: DiscoveredAITraining | null, currentModeId: string | null): string | null {
+    if (!profile) {
         return null;
     }
 
-    return getCodingAgentLaunchMode(agent, currentLaunchModeId).id;
+    return getAITrainingLaunchMode(profile, currentModeId).id;
 }
 
-export const useCodingAgentsStore = create<CodingAgentsState>((set, get) => ({
-    agents: [],
+export const useAITrainingStore = create<AITrainingState>((set, get) => ({
+    profiles: [],
     status: "idle",
     error: null,
-    selectedAgentId: null,
+    selectedProfileId: null,
     selectedWorkspaceId: null,
     selectedSurfaceId: null,
     selectedPaneId: null,
@@ -109,35 +112,39 @@ export const useCodingAgentsStore = create<CodingAgentsState>((set, get) => ({
     installError: null,
     lastInstallCommand: null,
 
-    refreshAgents: async () => {
-        set({ status: "loading", error: null });
+    refreshProfiles: async (workspaceId) => {
+        const effectiveWorkspaceId = workspaceId ?? get().selectedWorkspaceId ?? useWorkspaceStore.getState().activeWorkspaceId ?? null;
+        const workspacePath = resolveWorkspacePath(effectiveWorkspaceId);
+        set({ status: "loading", error: null, selectedWorkspaceId: effectiveWorkspaceId });
 
         try {
-            const agents = await discoverCodingAgents();
+            const profiles = await discoverAITrainingProfiles(workspacePath);
+            const nextSelectedProfileId = pickDefaultProfile(profiles, get().selectedProfileId);
             set((state) => ({
-                agents,
-                status: agents.some((agent) => agent.available) ? "ready" : "error",
-                error: agents.some((agent) => agent.available) ? null : agents[0]?.error ?? "No coding agents were found on PATH.",
-                selectedAgentId: pickDefaultAgent(agents, state.selectedAgentId),
+                profiles,
+                status: "ready",
+                error: null,
+                selectedWorkspaceId: effectiveWorkspaceId,
+                selectedProfileId: nextSelectedProfileId,
                 selectedLaunchModeId: pickDefaultLaunchMode(
-                    agents.find((agent) => agent.id === pickDefaultAgent(agents, state.selectedAgentId)) ?? null,
+                    profiles.find((profile) => profile.id === nextSelectedProfileId) ?? null,
                     state.selectedLaunchModeId,
                 ),
             }));
         } catch (error) {
             set({
-                agents: [],
+                profiles: [],
                 status: "error",
-                error: error instanceof Error ? error.message : "Failed to discover coding agents.",
+                error: error instanceof Error ? error.message : "Failed to discover AI Training profiles.",
             });
         }
     },
 
-    setSelectedAgentId: (selectedAgentId) => set((state) => {
-        const agent = state.agents.find((entry) => entry.id === selectedAgentId) ?? null;
+    setSelectedProfileId: (selectedProfileId) => set((state) => {
+        const profile = state.profiles.find((entry) => entry.id === selectedProfileId) ?? null;
         return {
-            selectedAgentId,
-            selectedLaunchModeId: pickDefaultLaunchMode(agent, state.selectedLaunchModeId),
+            selectedProfileId,
+            selectedLaunchModeId: pickDefaultLaunchMode(profile, state.selectedLaunchModeId),
             launchError: null,
             installError: null,
             launchState: state.launchState === "success" ? "idle" : state.launchState,
@@ -167,16 +174,16 @@ export const useCodingAgentsStore = create<CodingAgentsState>((set, get) => ({
         }));
     },
 
-    launchSelectedAgent: async () => {
+    launchSelectedProfile: async () => {
         const state = get();
-        const selectedAgent = state.agents.find((agent) => agent.id === state.selectedAgentId);
-        if (!selectedAgent) {
-            set({ launchState: "error", launchError: "Choose a coding agent before launching." });
+        const selectedProfile = state.profiles.find((profile) => profile.id === state.selectedProfileId);
+        if (!selectedProfile) {
+            set({ launchState: "error", launchError: "Choose an AI Training profile before launching." });
             return false;
         }
 
-        if (!selectedAgent.available) {
-            set({ launchState: "error", launchError: `${selectedAgent.label} is not available on PATH.` });
+        if (!selectedProfile.available) {
+            set({ launchState: "error", launchError: `${selectedProfile.label} is missing one or more required tools.` });
             return false;
         }
 
@@ -186,16 +193,22 @@ export const useCodingAgentsStore = create<CodingAgentsState>((set, get) => ({
             return false;
         }
 
-        const launchMode = getCodingAgentLaunchMode(selectedAgent, state.selectedLaunchModeId);
+        const workspacePath = resolveWorkspacePath(target.workspaceId);
+        const launchMode = getAITrainingLaunchMode(selectedProfile, state.selectedLaunchModeId);
         const prompt = state.launchPrompt.trim();
         if (launchMode.requiresPrompt && !prompt) {
-            set({ launchState: "error", launchError: `Provide a prompt before launching ${selectedAgent.label} in ${launchMode.label} mode.` });
+            set({ launchState: "error", launchError: `Provide input before launching ${selectedProfile.label} in ${launchMode.label} mode.` });
             return false;
         }
 
-        const command = buildCodingAgentLaunchCommand(selectedAgent, state.selectedLaunchModeId, state.launchPrompt);
+        if (launchMode.requiresWorkspace && !workspacePath) {
+            set({ launchState: "error", launchError: `Set a workspace cwd before launching ${selectedProfile.label}.` });
+            return false;
+        }
+
+        const command = buildAITrainingLaunchCommand(selectedProfile, state.selectedLaunchModeId, state.launchPrompt, workspacePath);
         if (!command) {
-            set({ launchState: "error", launchError: `No launch command is defined for ${selectedAgent.label}.` });
+            set({ launchState: "error", launchError: `No launch command is defined for ${selectedProfile.label}.` });
             return false;
         }
 
@@ -208,34 +221,41 @@ export const useCodingAgentsStore = create<CodingAgentsState>((set, get) => ({
 
         try {
             await sendCommandToPane(target.paneId, command);
-            set({ launchState: "success", launchError: null, selectedWorkspaceId: target.workspaceId, selectedSurfaceId: target.surfaceId, selectedPaneId: target.paneId });
+            set({
+                launchState: "success",
+                launchError: null,
+                selectedWorkspaceId: target.workspaceId,
+                selectedSurfaceId: target.surfaceId,
+                selectedPaneId: target.paneId,
+            });
             return true;
         } catch (error) {
             set({
                 launchState: "error",
-                launchError: error instanceof Error ? error.message : `Failed to launch ${selectedAgent.label}.`,
+                launchError: error instanceof Error ? error.message : `Failed to launch ${selectedProfile.label}.`,
             });
             return false;
         }
     },
 
-    installSelectedAgent: async () => {
+    installSelectedProfile: async () => {
         const state = get();
-        const selectedAgent = state.agents.find((agent) => agent.id === state.selectedAgentId);
-        if (!selectedAgent) {
-            set({ installState: "error", installError: "Choose a coding agent before installing." });
-            return false;
-        }
-
-        const command = buildCodingAgentInstallCommand(selectedAgent);
-        if (!command) {
-            set({ installState: "error", installError: `No install command is defined for ${selectedAgent.label}.` });
+        const selectedProfile = state.profiles.find((profile) => profile.id === state.selectedProfileId);
+        if (!selectedProfile) {
+            set({ installState: "error", installError: "Choose an AI Training profile before installing prerequisites." });
             return false;
         }
 
         const target = resolveLaunchTarget(state.selectedWorkspaceId, state.selectedSurfaceId, state.selectedPaneId);
         if (!target) {
             set({ installState: "error", installError: "Choose a valid target workspace, surface, and pane." });
+            return false;
+        }
+
+        const workspacePath = resolveWorkspacePath(target.workspaceId);
+        const command = buildAITrainingInstallCommand(selectedProfile, workspacePath);
+        if (!command) {
+            set({ installState: "error", installError: `No install command is defined for ${selectedProfile.label}.` });
             return false;
         }
 
@@ -248,12 +268,18 @@ export const useCodingAgentsStore = create<CodingAgentsState>((set, get) => ({
 
         try {
             await sendCommandToPane(target.paneId, command);
-            set({ installState: "success", installError: null, selectedWorkspaceId: target.workspaceId, selectedSurfaceId: target.surfaceId, selectedPaneId: target.paneId });
+            set({
+                installState: "success",
+                installError: null,
+                selectedWorkspaceId: target.workspaceId,
+                selectedSurfaceId: target.surfaceId,
+                selectedPaneId: target.paneId,
+            });
             return true;
         } catch (error) {
             set({
                 installState: "error",
-                installError: error instanceof Error ? error.message : `Failed to install ${selectedAgent.label}.`,
+                installError: error instanceof Error ? error.message : `Failed to install prerequisites for ${selectedProfile.label}.`,
             });
             return false;
         }

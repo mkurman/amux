@@ -1,13 +1,10 @@
 import { create } from "zustand";
 import { AmuxSettings, DEFAULT_SETTINGS, ShellProfile } from "./types";
 import {
-  readLegacyLocalStorageJson,
   readPersistedJson,
   scheduleJsonWrite,
-  writeLegacyLocalStorageJson,
 } from "./persistence";
 
-const STORAGE_KEY = "amux_settings";
 const SETTINGS_FILE = "settings.json";
 
 type PersistedSettingsState = {
@@ -15,21 +12,12 @@ type PersistedSettingsState = {
   profiles?: ShellProfile[];
 };
 
-function loadPersistedState(): PersistedSettingsState {
-  const parsed = readLegacyLocalStorageJson<PersistedSettingsState>(STORAGE_KEY);
-  return {
-    settings: parsed?.settings ?? {},
-    profiles: Array.isArray(parsed?.profiles) ? parsed?.profiles : [],
-  };
-}
-
 function persistState(state: { settings: AmuxSettings; profiles: ShellProfile[] }) {
   const payload = {
     settings: state.settings,
     profiles: state.profiles,
   };
 
-  writeLegacyLocalStorageJson(STORAGE_KEY, payload);
   scheduleJsonWrite(SETTINGS_FILE, payload, 500);
 }
 
@@ -51,11 +39,9 @@ export interface SettingsState {
   getDefaultProfile: () => ShellProfile | undefined;
 }
 
-const persistedState = loadPersistedState();
-
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  settings: { ...DEFAULT_SETTINGS, ...(persistedState.settings ?? {}) },
-  profiles: persistedState.profiles ?? [],
+  settings: { ...DEFAULT_SETTINGS },
+  profiles: [],
 
   updateSetting: (key, value) => {
     set((s) => {
@@ -137,18 +123,5 @@ export async function hydrateSettingsStore(): Promise<void> {
       settings: { ...DEFAULT_SETTINGS, ...(diskState.settings ?? {}) },
       profiles: Array.isArray(diskState.profiles) ? diskState.profiles : [],
     });
-    writeLegacyLocalStorageJson(STORAGE_KEY, diskState);
-    return;
-  }
-
-  if (persistedState.settings || persistedState.profiles?.length) {
-    scheduleJsonWrite(
-      SETTINGS_FILE,
-      {
-        settings: { ...DEFAULT_SETTINGS, ...(persistedState.settings ?? {}) },
-        profiles: persistedState.profiles ?? [],
-      },
-      0,
-    );
   }
 }

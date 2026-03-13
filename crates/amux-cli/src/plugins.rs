@@ -179,10 +179,24 @@ fn validate_plugin_package(package_dir: &Path) -> Result<InstalledPluginRecord> 
         );
     }
 
+    let package_root = package_dir
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", package_dir.display()))?;
     let entry_path = package_dir.join(manifest.entry());
     if !entry_path.is_file() {
         bail!(
             "package '{}' declares amuxPlugin.entry='{}' but the file does not exist",
+            package_json.name,
+            manifest.entry()
+        );
+    }
+
+    let canonical_entry_path = entry_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", entry_path.display()))?;
+    if canonical_entry_path != package_root && !canonical_entry_path.starts_with(&package_root) {
+        bail!(
+            "package '{}' declares amuxPlugin.entry='{}' outside the installed package directory",
             package_json.name,
             manifest.entry()
         );
@@ -197,7 +211,7 @@ fn validate_plugin_package(package_dir: &Path) -> Result<InstalledPluginRecord> 
         package_name: package_json.name.clone(),
         package_version: package_json.version.unwrap_or_else(|| "0.0.0".to_string()),
         plugin_name: package_json.name,
-        entry_path: entry_path.to_string_lossy().to_string(),
+        entry_path: canonical_entry_path.to_string_lossy().to_string(),
         format,
         installed_at,
     })
@@ -211,6 +225,7 @@ pub fn install_plugin(package_spec: &str) -> Result<InstalledPluginRecord> {
 
     let status = Command::new(npm_command())
         .arg("install")
+        .arg("--ignore-scripts")
         .arg("--prefix")
         .arg(&root)
         .arg(package_spec)

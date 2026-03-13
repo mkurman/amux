@@ -34,6 +34,7 @@ type RegisteredPluginAssistantTool = {
 };
 
 const registeredToolsByName = new Map<string, RegisteredPluginAssistantTool>();
+const registrationsByToolName = new Map<string, RegisteredPluginAssistantTool[]>();
 const registeredNamesByPlugin = new Map<string, string[]>();
 
 export function registerPluginAssistantTools(
@@ -53,27 +54,33 @@ export function registerPluginAssistantTools(
             continue;
         }
 
-        if (registeredToolsByName.has(name)) {
-            console.warn(`Assistant tool '${name}' is already registered; skipping duplicate from plugin '${pluginId}'.`);
-            continue;
-        }
-
         const executor = executors?.[name];
         if (!executor) {
             console.warn(`Assistant tool '${name}' from plugin '${pluginId}' is missing an executor; skipping registration.`);
             continue;
         }
 
-        registeredToolsByName.set(name, {
+        const registration = {
             pluginId,
             tool,
             executor,
-        });
+        };
+
+        const existingRegistrations = registrationsByToolName.get(name) ?? [];
+        const nextRegistrations = existingRegistrations.filter((entry) => entry.pluginId !== pluginId);
+        if (existingRegistrations.length > 0 && !existingRegistrations.some((entry) => entry.pluginId === pluginId)) {
+            console.warn(`Assistant tool '${name}' is already registered; keeping '${pluginId}' as a fallback registration.`);
+        }
+
+        nextRegistrations.push(registration);
+        registrationsByToolName.set(name, nextRegistrations);
+        registeredToolsByName.set(name, nextRegistrations[0]);
         addedNames.push(name);
     }
 
     if (addedNames.length > 0) {
-        registeredNamesByPlugin.set(pluginId, addedNames);
+        const previous = registeredNamesByPlugin.get(pluginId) ?? [];
+        registeredNamesByPlugin.set(pluginId, Array.from(new Set([...previous, ...addedNames])));
     }
 }
 
@@ -84,7 +91,14 @@ export function unregisterPluginAssistantTools(pluginId: string): void {
     }
 
     for (const name of names) {
-        registeredToolsByName.delete(name);
+        const remaining = (registrationsByToolName.get(name) ?? []).filter((entry) => entry.pluginId !== pluginId);
+        if (remaining.length > 0) {
+            registrationsByToolName.set(name, remaining);
+            registeredToolsByName.set(name, remaining[0]);
+        } else {
+            registrationsByToolName.delete(name);
+            registeredToolsByName.delete(name);
+        }
     }
 
     registeredNamesByPlugin.delete(pluginId);

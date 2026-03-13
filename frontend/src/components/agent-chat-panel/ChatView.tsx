@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type React from "react";
 import type { AgentMessage, AgentThread } from "../../lib/agentStore";
+import { inputStyle } from "./shared";
 
 export function ChatView({
     messages,
@@ -27,6 +28,8 @@ export function ChatView({
     onSendMessage: (text: string) => void;
     onStopStreaming: () => void;
 }) {
+    const [searchQuery, setSearchQuery] = useState("");
+
     const handleSendClick = () => {
         const text = input.trim();
         if (!text) return;
@@ -42,6 +45,7 @@ export function ChatView({
             toolArguments: string;
             status: "requested" | "executing" | "done" | "error";
             resultContent: string;
+            createdAt: number;
         };
 
         const items: Array<{ type: "message"; message: AgentMessage } | { type: "tool"; group: ToolGroup }> = [];
@@ -64,6 +68,7 @@ export function ChatView({
                     toolArguments: message.toolArguments || "",
                     status: message.toolStatus || (message.content ? "done" : "requested"),
                     resultContent: message.content || "",
+                    createdAt: message.createdAt,
                 };
                 groups.set(groupKey, initialGroup);
                 items.push({ type: "tool", group: initialGroup });
@@ -78,10 +83,39 @@ export function ChatView({
                 existing.status = "done";
             }
             if (message.content) existing.resultContent = message.content;
+            existing.createdAt = Math.min(existing.createdAt, message.createdAt);
         }
 
         return items;
     }, [messages]);
+
+    const filteredDisplayItems = useMemo(() => {
+        const normalizedQuery = searchQuery.trim().toLowerCase();
+
+        return displayItems.filter((item) => {
+            if (!normalizedQuery) {
+                return true;
+            }
+
+            if (item.type === "message") {
+                const message = item.message;
+                return [
+                    message.role,
+                    message.content,
+                    message.reasoning ?? "",
+                    message.provider ?? "",
+                    message.model ?? "",
+                ].join(" ").toLowerCase().includes(normalizedQuery);
+            }
+
+            return [
+                item.group.toolName,
+                item.group.toolArguments,
+                item.group.resultContent,
+                item.group.status,
+            ].join(" ").toLowerCase().includes(normalizedQuery);
+        });
+    }, [displayItems, searchQuery]);
 
     const sessionUsageSummary = useMemo(() => {
         let totalCost = 0;
@@ -114,21 +148,31 @@ export function ChatView({
                 style={{
                     flex: 1,
                     overflow: "auto",
-                    padding: "var(--space-3)",
+                    padding: "8px 8px 8px 16px",
                     display: "flex",
                     flexDirection: "column",
                     gap: "var(--space-3)",
                 }}
             >
-                {messages.length === 0 && (
+                <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap", alignItems: "center" }}>
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        placeholder="Search messages and tool output..."
+                        style={{ ...inputStyle, minWidth: 220 }}
+                    />
+                </div>
+
+                {filteredDisplayItems.length === 0 && (
                     <div className="amux-empty-state">
                         <div className="amux-empty-state__icon">✨</div>
-                        <div className="amux-empty-state__title">Start a conversation</div>
-                        <div className="amux-empty-state__description">Send a message to begin collaborating with the agent</div>
+                        <div className="amux-empty-state__title">{messages.length === 0 ? "Start a conversation" : "No chat items match filters"}</div>
+                        <div className="amux-empty-state__description">{messages.length === 0 ? "Send a message to begin collaborating with the agent" : "Try a different search term."}</div>
                     </div>
                 )}
 
-                {displayItems.map((item) => {
+                {filteredDisplayItems.map((item) => {
                     if (item.type === "tool") {
                         return <ToolEventRow key={`tool_${item.group.key}`} group={item.group} />;
                     }

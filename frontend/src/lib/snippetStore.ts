@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { readPersistedJson, scheduleJsonWrite } from "./persistence";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,28 +85,27 @@ const SEED_SNIPPETS: Array<Omit<Snippet, "owner">> = [
   },
 ];
 
-const STORAGE_KEY = "amux_snippets";
+const SNIPPETS_FILE = "snippets.json";
+
+function syncSnippetCounter(snippets: Snippet[]): void {
+  let maxId = 100;
+  for (const snippet of snippets) {
+    const match = /^snip_(\d+)$/.exec(snippet.id);
+    if (match) {
+      maxId = Math.max(maxId, Number(match[1]));
+    }
+  }
+  _id = maxId;
+}
 
 function loadSnippets(): Snippet[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.map((snippet) => ({
-          ...snippet,
-          owner: snippet?.owner === "assistant" ? "assistant" : "user",
-        }));
-      }
-    }
-  } catch { /* ignore */ }
-  return SEED_SNIPPETS.map((snippet) => ({ ...snippet, owner: "user" }));
+  const seeded = SEED_SNIPPETS.map((snippet) => ({ ...snippet, owner: "user" as const }));
+  syncSnippetCounter(seeded);
+  return seeded;
 }
 
 function saveSnippets(snippets: Snippet[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snippets));
-  } catch { /* ignore */ }
+  scheduleJsonWrite(SNIPPETS_FILE, snippets, 200);
 }
 
 let _id = 100;
@@ -193,6 +193,21 @@ export const useSnippetStore = create<SnippetState>((set, get) => ({
     return [...cats].sort();
   },
 }));
+
+export async function hydrateSnippetStore(): Promise<void> {
+  const persisted = await readPersistedJson<Snippet[]>(SNIPPETS_FILE);
+  if (Array.isArray(persisted) && persisted.length > 0) {
+    const normalized: Snippet[] = persisted.map((snippet) => ({
+      ...snippet,
+      owner: snippet?.owner === "assistant" ? "assistant" : "user",
+    }));
+    syncSnippetCounter(normalized);
+    useSnippetStore.setState({ snippets: normalized });
+    return;
+  }
+
+  scheduleJsonWrite(SNIPPETS_FILE, useSnippetStore.getState().snippets, 0);
+}
 
 /** Resolve template placeholders: {{key}} → value */
 export function resolveSnippetTemplate(

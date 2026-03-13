@@ -4,8 +4,15 @@ import { ComponentRegistryAPI } from "../registry/componentRegistry";
 import { CommandRegistryAPI } from "../registry/commandRegistry";
 import { PluginManager, type Plugin } from "./PluginManager";
 
-const pluginManager = new PluginManager();
 const PLUGIN_VIEWS_DIR = "views/plugins";
+
+const getPluginManager = (): PluginManager => {
+  if (!window.__amuxPluginManager) {
+    window.__amuxPluginManager = new PluginManager();
+  }
+
+  return window.__amuxPluginManager;
+};
 
 const persistPluginViews = async (plugin: Plugin): Promise<void> => {
   if (!plugin.views || Object.keys(plugin.views).length === 0) {
@@ -35,8 +42,11 @@ export interface AmuxPluginAPI {
 declare global {
   interface Window {
     AmuxApi?: AmuxPluginAPI;
+    __amuxPluginManager?: PluginManager;
   }
 }
+
+const pluginManager = getPluginManager();
 
 window.AmuxApi = {
   registerComponent: ComponentRegistryAPI.register,

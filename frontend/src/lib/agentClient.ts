@@ -513,7 +513,6 @@ export function messagesToApiFormat(
           role: "tool",
           content: m.content,
           tool_call_id: m.toolCallId,
-          name: m.toolName,
         } satisfies ApiChatMessage;
       }
 

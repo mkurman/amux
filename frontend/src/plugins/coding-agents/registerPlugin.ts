@@ -3,6 +3,20 @@ import { discoverCodingAgents } from "./bridge";
 import { useCodingAgentsStore } from "./store";
 import { useWorkspaceStore } from "../../lib/workspaceStore";
 
+function resolveLaunchModeId(agentId: string | null, modeRef: unknown) {
+    const agent = useCodingAgentsStore.getState().agents.find((entry) => entry.id === agentId);
+    const ref = String(modeRef ?? "").trim().toLowerCase();
+    if (!agent) {
+        return null;
+    }
+
+    if (!ref) {
+        return useCodingAgentsStore.getState().selectedLaunchModeId ?? agent.launchModes?.find((mode) => mode.recommended)?.id ?? agent.launchModes?.[0]?.id ?? null;
+    }
+
+    return agent.launchModes?.find((mode) => mode.id.toLowerCase() === ref || mode.label.trim().toLowerCase() === ref)?.id ?? null;
+}
+
 function resolveAgentId(agentRef: unknown) {
     const ref = String(agentRef ?? "").trim().toLowerCase();
     const agents = useCodingAgentsStore.getState().agents;
@@ -60,10 +74,15 @@ export function registerCodingAgentsPlugin() {
         return;
     }
 
+    if (window.AmuxApi.getPlugins().includes("coding-agents")) {
+        registered = true;
+        return;
+    }
+
     window.AmuxApi.registerPlugin({
         id: "coding-agents",
         name: "Coding Agents",
-        version: "0.1.0",
+        version: "0.1.1",
         assistantTools: [
             {
                 type: "function",
@@ -86,7 +105,15 @@ export function registerCodingAgentsPlugin() {
                         properties: {
                             agent: {
                                 type: "string",
-                                description: "Coding agent id, label, or executable name such as claude, codex, gemini, opencode, kimi, aider, or goose.",
+                                description: "Coding agent id, label, or executable name such as claude, codex, hermes, opencode, openclaw, kimi, aider, or goose.",
+                            },
+                            mode: {
+                                type: "string",
+                                description: "Optional launch mode id or label such as interactive, one-shot, direct-agent, or gateway.",
+                            },
+                            prompt: {
+                                type: "string",
+                                description: "Optional inline task prompt for launch modes that require one, such as Hermes one-shot or OpenClaw direct-agent mode.",
                             },
                             workspace: {
                                 type: "string",
@@ -111,10 +138,14 @@ export function registerCodingAgentsPlugin() {
                 const lines = agents.map((agent) => {
                     const status = agent.available ? "available" : "unavailable";
                     const details = [
-                        `${agent.label} [${agent.id}] - ${status}`,
+                        `${agent.label} [${agent.id}] - ${status} - ${agent.kind} - ${agent.readiness ?? "missing"}`,
                         `  executable: ${agent.executable ?? agent.executables[0] ?? "unknown"}`,
                         `  version: ${agent.version ?? "not detected"}`,
                         `  path: ${agent.path ?? agent.error ?? "not found"}`,
+                        `  modes: ${(agent.launchModes ?? []).map((mode) => mode.id).join(", ") || "interactive"}`,
+                        `  capabilities: ${(agent.capabilities ?? []).join(", ") || "none declared"}`,
+                        ...(agent.runtimeNotes?.length ? [`  runtime: ${agent.runtimeNotes.join(" | ")}`] : []),
+                        ...(agent.gatewayLabel ? [`  gateway: ${agent.gatewayLabel} (${agent.gatewayReachable ? "reachable" : "not reachable"})`] : []),
                     ];
                     return details.join("\n");
                 });
@@ -151,22 +182,18 @@ export function registerCodingAgentsPlugin() {
                 store.setSelectedWorkspaceId(target.workspaceId);
                 store.setSelectedSurfaceId(target.surfaceId);
                 store.setSelectedPaneId(target.paneId);
+                store.setSelectedLaunchModeId(resolveLaunchModeId(agentId, args.mode));
+                store.setLaunchPrompt(String(args.prompt ?? ""));
 
-                const ok = await useCodingAgentsStore.getState().launchSelectedAgent();
                 const nextState = useCodingAgentsStore.getState();
-                if (!ok) {
-                    return {
-                        toolCallId: call.id,
-                        name: call.function.name,
-                        content: `Error: ${nextState.launchError ?? "Failed to launch coding agent."}`,
-                    };
-                }
-
                 const launchedAgent = nextState.agents.find((agent) => agent.id === agentId);
+                const selectedMode = launchedAgent?.launchModes?.find((mode) => mode.id === nextState.selectedLaunchModeId)
+                    ?? launchedAgent?.launchModes?.find((mode) => mode.recommended)
+                    ?? launchedAgent?.launchModes?.[0];
                 return {
                     toolCallId: call.id,
                     name: call.function.name,
-                    content: `Launched ${launchedAgent?.label ?? agentId} in pane [${target.paneId}] on surface [${target.surfaceId}] in workspace [${target.workspaceId}] using command: ${nextState.lastLaunchCommand ?? "unknown"}`,
+                    content: `Prepared ${launchedAgent?.label ?? agentId} for pane [${target.paneId}] on surface [${target.surfaceId}] in workspace [${target.workspaceId}]${selectedMode ? ` using ${selectedMode.label} mode` : ""}. Launch must be initiated by the user from the UI or through the managed terminal command tool.` ,
                 };
             },
         },

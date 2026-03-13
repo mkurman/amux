@@ -484,7 +484,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     workspaces: [],
     activeWorkspaceId: null,
     sidebarVisible: true,
-    sidebarWidth: 220,
+    sidebarWidth: 400,
     zoomedPaneId: null,
     commandPaletteOpen: false,
     searchOpen: false,
@@ -948,7 +948,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
     setSidebarWidth: (width) => set((state) => ({
-      sidebarWidth: Math.max(180, Math.min(420, Math.round(width))),
+      sidebarWidth: Math.max(180, Math.min(540, Math.round(width))),
       sidebarVisible: true,
       workspaces: state.workspaces,
     })),

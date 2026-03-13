@@ -32,9 +32,5 @@ layout:
         visible: true
         resizable: true
         resizeAxis: "both"
-        minWidth: 420
-        minHeight: 260
-        maxWidth: "96vw"
-        maxHeight: "calc(100vh - 108px)"
       builder:
         editable: true

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef, useState } from "react";
 import { AgentApprovalOverlay as AgentApprovalOverlayComponent } from "./AgentApprovalOverlay";
 import { LayoutContainer as LayoutContainerComponent } from "./LayoutContainer";
 import { Sidebar as SidebarComponent } from "./Sidebar";
@@ -564,6 +564,109 @@ export const AgentChatPanel: React.FC<ViewProps> = (props) => {
   });
 };
 
+export const AgentChatDockShell: React.FC<ViewProps> = (props) => {
+  const { style, className, children, visible, hidden, minWidth, maxWidth, builderMeta } = splitViewProps(props);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+
+  const parseConstraint = (value?: number | string): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed.endsWith("vw")) {
+        const amount = Number.parseFloat(trimmed.slice(0, -2));
+        return Number.isFinite(amount) ? (window.innerWidth * amount) / 100 : undefined;
+      }
+      const parsed = Number.parseFloat(trimmed);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+
+    return undefined;
+  };
+
+  const minWidthValue = parseConstraint(minWidth ?? style?.minWidth) ?? 280;
+  const maxWidthValue = parseConstraint(maxWidth ?? style?.maxWidth) ?? Math.round(window.innerWidth * 0.8);
+  const initialWidth = parseConstraint(style?.width) ?? 440;
+  const clampWidth = (value: number) => Math.min(maxWidthValue, Math.max(minWidthValue, Math.round(value)));
+  const [width, setWidth] = useState(() => clampWidth(initialWidth));
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!shellRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const pointerId = event.pointerId;
+    const target = event.currentTarget;
+    const rect = shellRef.current.getBoundingClientRect();
+    const startRight = rect.right;
+
+    target.setPointerCapture(pointerId);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      setWidth(clampWidth(startRight - moveEvent.clientX));
+    };
+
+    const onPointerEnd = () => {
+      if (target.hasPointerCapture(pointerId)) {
+        target.releasePointerCapture(pointerId);
+      }
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerEnd);
+      window.removeEventListener("pointercancel", onPointerEnd);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerEnd);
+    window.addEventListener("pointercancel", onPointerEnd);
+  };
+
+  return renderEditableWrapper({
+    style: {
+      ...(style ?? {}),
+      width: `${width}px`,
+      flex: `0 0 ${width}px`,
+      flexShrink: 0,
+      minWidth: `${minWidthValue}px`,
+      maxWidth: `${maxWidthValue}px`,
+      position: style?.position ?? "relative",
+      overflow: style?.overflow ?? "hidden",
+    },
+    className,
+    visible,
+    hidden,
+    minWidth,
+    maxWidth,
+    builderMeta,
+    content: (
+      <div ref={shellRef} style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
+        {children}
+        <div
+          onPointerDown={handleResizeStart}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 10,
+            height: "100%",
+            cursor: "col-resize",
+            zIndex: 20,
+            background: "linear-gradient(90deg, rgba(148, 163, 184, 0.2), rgba(148, 163, 184, 0.45), transparent)",
+          }}
+        />
+      </div>
+    ),
+  });
+};
+
 export const AgentChatPanelProvider: React.FC<ViewProps> = (props) => {
   const { style, className, visible, hidden, resizable, resizeAxis, minWidth, minHeight, maxWidth, maxHeight, builderMeta, componentProps, children } = splitViewProps(props);
   return renderEditableWrapper({
@@ -929,6 +1032,7 @@ export const CommandLogPanelView = CommandLogPanel;
 export const CommandHistoryPickerView = CommandHistoryPicker;
 export const SearchOverlayView = SearchOverlay;
 export const AgentChatPanelView = AgentChatPanel;
+export const AgentChatDockShellView = AgentChatDockShell;
 export const AgentChatPanelProviderView = AgentChatPanelProvider;
 export const AgentChatPanelHeaderView = AgentChatPanelHeader;
 export const AgentChatPanelTabsView = AgentChatPanelTabs;

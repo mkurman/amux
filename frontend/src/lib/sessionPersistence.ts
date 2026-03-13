@@ -8,13 +8,10 @@ import { allLeafIds } from "./bspTree";
 import { useWorkspaceStore } from "./workspaceStore";
 import {
   deletePersistedPath,
-  readLegacyLocalStorageJson,
   readPersistedJson,
   scheduleJsonWrite,
-  writeLegacyLocalStorageJson,
 } from "./persistence";
 
-const STORAGE_KEY = "amux_session";
 const SESSION_FILE = "session.json";
 const VERSION = 1;
 
@@ -93,25 +90,17 @@ export function captureSession(): PersistedSession {
   };
 }
 
-/** Save the current session to localStorage. */
+/** Save the current session to the amux data directory. */
 export function saveSession(): void {
   const data = captureSession();
-  writeLegacyLocalStorageJson(STORAGE_KEY, data);
   scheduleJsonWrite(SESSION_FILE, data, 300);
 }
 
-/** Load a persisted session from localStorage. Returns null if nothing stored. */
+/** Load a persisted session from the amux data directory. Returns null if nothing stored. */
 export async function loadSession(): Promise<PersistedSession | null> {
   const diskSession = await readPersistedJson<PersistedSession>(SESSION_FILE);
   if (diskSession?.version === VERSION) {
-    writeLegacyLocalStorageJson(STORAGE_KEY, diskSession);
     return diskSession;
-  }
-
-  const legacySession = readLegacyLocalStorageJson<PersistedSession>(STORAGE_KEY);
-  if (legacySession?.version === VERSION) {
-    scheduleJsonWrite(SESSION_FILE, legacySession, 0);
-    return legacySession;
   }
 
   return null;
@@ -119,7 +108,6 @@ export async function loadSession(): Promise<PersistedSession | null> {
 
 /** Clear the persisted session. */
 export function clearSession(): void {
-  localStorage.removeItem(STORAGE_KEY);
   void deletePersistedPath(SESSION_FILE);
 }
 

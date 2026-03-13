@@ -2,14 +2,12 @@ import { create } from "zustand";
 import { CommandLogEntry, WorkspaceId, SurfaceId, PaneId } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import {
-  readLegacyLocalStorageJson,
   readPersistedJson,
   scheduleJsonWrite,
-  writeLegacyLocalStorageJson,
 } from "./persistence";
+import { useSettingsStore } from "./settingsStore";
 
 let _logId = 0;
-const STORAGE_KEY = "amux_command_log";
 const COMMAND_LOG_FILE = "command-log.json";
 
 function syncLogId(entries: CommandLogEntry[]) {
@@ -60,43 +58,17 @@ function mergeEntries(primary: CommandLogEntry[], secondary: CommandLogEntry[]):
 }
 
 function readRetentionDays(): number {
-  if (typeof window === "undefined") {
-    return DEFAULT_SETTINGS.commandLogRetentionDays;
-  }
-
-  try {
-    const raw = window.localStorage.getItem("amux_settings");
-    if (!raw) {
-      return DEFAULT_SETTINGS.commandLogRetentionDays;
-    }
-
-    const parsed = JSON.parse(raw) as {
-      settings?: { commandLogRetentionDays?: unknown };
-      commandLogRetentionDays?: unknown;
-    };
-    const candidate = parsed.settings?.commandLogRetentionDays ?? parsed.commandLogRetentionDays;
-    const retentionDays = typeof candidate === "number" ? candidate : Number(candidate);
-
-    return Number.isFinite(retentionDays)
-      ? retentionDays
-      : DEFAULT_SETTINGS.commandLogRetentionDays;
-  } catch {
-    return DEFAULT_SETTINGS.commandLogRetentionDays;
-  }
+  const retentionDays = useSettingsStore.getState().settings.commandLogRetentionDays;
+  return Number.isFinite(retentionDays)
+    ? retentionDays
+    : DEFAULT_SETTINGS.commandLogRetentionDays;
 }
 
 function loadEntries(): CommandLogEntry[] {
-  try {
-    const parsed = normalizeEntries(readLegacyLocalStorageJson<CommandLogEntry[]>(STORAGE_KEY) ?? []);
-    syncLogId(parsed);
-    return parsed;
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 function persistEntries(entries: CommandLogEntry[]) {
-  writeLegacyLocalStorageJson(STORAGE_KEY, entries);
   scheduleJsonWrite(COMMAND_LOG_FILE, entries, 200);
 }
 
@@ -252,9 +224,7 @@ export const useCommandLogStore = create<CommandLogState>((set, get) => ({
 
 export async function hydrateCommandLogStore(): Promise<void> {
   const diskEntries = normalizeEntries(await readPersistedJson<CommandLogEntry[]>(COMMAND_LOG_FILE));
-  const localEntries = normalizeEntries(readLegacyLocalStorageJson<CommandLogEntry[]>(STORAGE_KEY) ?? []);
-
-  const merged = pruneEntries(mergeEntries(diskEntries, localEntries));
+  const merged = pruneEntries(mergeEntries(diskEntries, []));
   useCommandLogStore.getState().hydrateEntries(merged);
 
   if (merged.length === 0) {
@@ -263,7 +233,4 @@ export async function hydrateCommandLogStore(): Promise<void> {
     }
     return;
   }
-
-  writeLegacyLocalStorageJson(STORAGE_KEY, merged);
-  scheduleJsonWrite(COMMAND_LOG_FILE, merged, 0);
 }

@@ -1,6 +1,7 @@
+import { useEffect, useMemo, useState } from "react";
 import { ReasoningStream } from "../ReasoningStream";
 import { useAgentMissionStore } from "../../lib/agentMissionStore";
-import { EmptyPanel, MetricRibbon, SectionTitle } from "./shared";
+import { DEFAULT_PAGE_SIZE, EmptyPanel, MetricRibbon, PageSizeSelect, PaginationControls, SectionTitle, inputStyle } from "./shared";
 
 export function TraceView({
     operationalEvents,
@@ -11,6 +12,58 @@ export function TraceView({
     cognitiveEvents: ReturnType<typeof useAgentMissionStore.getState>["cognitiveEvents"];
     pendingApprovals: ReturnType<typeof useAgentMissionStore.getState>["approvals"];
 }) {
+    const [searchQuery, setSearchQuery] = useState("");
+    const [dateFilter, setDateFilter] = useState("");
+    const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+    const [reasoningPage, setReasoningPage] = useState(1);
+    const [timelinePage, setTimelinePage] = useState(1);
+
+    const matchesDate = (timestamp: number) => {
+        if (!dateFilter) return true;
+        return new Date(timestamp).toISOString().slice(0, 10) === dateFilter;
+    };
+
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    const filteredCognitiveEvents = useMemo(() => {
+        return cognitiveEvents.filter((event) => {
+            if (!matchesDate(event.timestamp)) return false;
+            if (!normalizedQuery) return true;
+
+            return [event.source, event.content]
+                .join(" ")
+                .toLowerCase()
+                .includes(normalizedQuery);
+        });
+    }, [cognitiveEvents, dateFilter, normalizedQuery]);
+
+    const filteredOperationalEvents = useMemo(() => {
+        return operationalEvents.filter((event) => {
+            if (!matchesDate(event.timestamp)) return false;
+            if (!normalizedQuery) return true;
+
+            return [event.kind, event.command ?? "", event.message ?? "", event.blastRadius ?? ""]
+                .join(" ")
+                .toLowerCase()
+                .includes(normalizedQuery);
+        });
+    }, [operationalEvents, dateFilter, normalizedQuery]);
+
+    useEffect(() => {
+        setReasoningPage(1);
+        setTimelinePage(1);
+    }, [searchQuery, dateFilter, pageSize]);
+
+    const visibleCognitiveEvents = useMemo(() => {
+        const start = (reasoningPage - 1) * pageSize;
+        return filteredCognitiveEvents.slice(start, start + pageSize);
+    }, [filteredCognitiveEvents, pageSize, reasoningPage]);
+
+    const visibleOperationalEvents = useMemo(() => {
+        const start = (timelinePage - 1) * pageSize;
+        return filteredOperationalEvents.slice(start, start + pageSize);
+    }, [filteredOperationalEvents, pageSize, timelinePage]);
+
     return (
         <div style={{ padding: "var(--space-4)", height: "100%", overflow: "auto" }}>
             <MetricRibbon
@@ -21,20 +74,54 @@ export function TraceView({
                 ]}
             />
 
+            <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap", alignItems: "center", marginBottom: "var(--space-4)" }}>
+                <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search trace and timeline..."
+                    style={{ ...inputStyle, minWidth: 220 }}
+                />
+                <input
+                    type="date"
+                    value={dateFilter}
+                    onChange={(event) => setDateFilter(event.target.value)}
+                    style={{ ...inputStyle, flex: "0 0 auto", minWidth: 170 }}
+                />
+                <PageSizeSelect value={pageSize} onChange={setPageSize} />
+            </div>
+
             <SectionTitle title="Reasoning Trace" subtitle="Parsed cognitive events" />
-            <ReasoningStream events={cognitiveEvents} />
+            <ReasoningStream events={visibleCognitiveEvents} />
+            <div style={{ marginTop: "var(--space-3)" }}>
+                <PaginationControls
+                    page={reasoningPage}
+                    pageSize={pageSize}
+                    totalItems={filteredCognitiveEvents.length}
+                    onPageChange={setReasoningPage}
+                />
+            </div>
 
             <SectionTitle title="Operational Timeline" subtitle="Execution events" />
 
-            {operationalEvents.length === 0 ? (
+            {visibleOperationalEvents.length === 0 ? (
                 <EmptyPanel message="No operational events captured yet." />
             ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-                    {operationalEvents.map((event) => (
+                    {visibleOperationalEvents.map((event) => (
                         <TimelineRow key={event.id} event={event} />
                     ))}
                 </div>
             )}
+
+            <div style={{ marginTop: "var(--space-3)" }}>
+                <PaginationControls
+                    page={timelinePage}
+                    pageSize={pageSize}
+                    totalItems={filteredOperationalEvents.length}
+                    onPageChange={setTimelinePage}
+                />
+            </div>
         </div>
     );
 }

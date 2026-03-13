@@ -4,6 +4,15 @@ const loadedExternalPluginEntries = new Set();
 
 async function injectInstalledPluginScript(entry) {
     const normalizedEntryPath = String(entry.sourceUrl || entry.entryPath || '');
+    if (!normalizedEntryPath) {
+        return {
+            packageName: entry.packageName,
+            pluginName: entry.pluginName,
+            status: 'error',
+            error: 'Plugin entry path is missing.',
+        };
+    }
+
     if (loadedExternalPluginEntries.has(normalizedEntryPath)) {
         return {
             packageName: entry.packageName,
@@ -12,10 +21,19 @@ async function injectInstalledPluginScript(entry) {
         };
     }
 
+    if (typeof entry.source !== 'string' || !entry.source.trim()) {
+        return {
+            packageName: entry.packageName,
+            pluginName: entry.pluginName,
+            status: 'error',
+            error: 'Plugin source payload is missing.',
+        };
+    }
+
     const script = document.createElement('script');
     script.type = 'text/javascript';
     script.dataset.amuxExternalPlugin = entry.packageName;
-    script.textContent = `${String(entry.source || '')}\n//# sourceURL=${normalizedEntryPath.replace(/\\/g, '/')}`;
+    script.textContent = `${entry.source}\n//# sourceURL=${normalizedEntryPath.replace(/\\/g, '/')}`;
 
     try {
         (document.head || document.documentElement).appendChild(script);
@@ -36,12 +54,32 @@ async function loadInstalledPlugins() {
 
     for (const entry of installed) {
         try {
+            if (entry?.status === 'error') {
+                results.push({
+                    packageName: entry.packageName,
+                    pluginName: entry.pluginName,
+                    status: 'error',
+                    error: entry.error || 'Plugin load failed in the main process.',
+                });
+                continue;
+            }
+
             if (entry.format !== 'script') {
                 results.push({
                     packageName: entry.packageName,
                     pluginName: entry.pluginName,
                     status: 'skipped',
                     error: `Unsupported plugin format '${entry.format}'`,
+                });
+                continue;
+            }
+
+            if (!entry.source) {
+                results.push({
+                    packageName: entry.packageName,
+                    pluginName: entry.pluginName,
+                    status: 'error',
+                    error: 'Plugin source payload is missing.',
                 });
                 continue;
             }
@@ -69,6 +107,7 @@ contextBridge.exposeInMainWorld('amux', {
     getDaemonPath: () => ipcRenderer.invoke('getDaemonPath'),
     getPlatform: () => ipcRenderer.invoke('getPlatform'),
     discoverCodingAgents: () => ipcRenderer.invoke('coding-agents-discover'),
+    discoverAITraining: (workspacePath) => ipcRenderer.invoke('ai-training-discover', workspacePath),
     listInstalledPlugins: () => ipcRenderer.invoke('plugin-list-installed'),
     loadInstalledPlugins: () => loadInstalledPlugins(),
     checkLspHealth: () => ipcRenderer.invoke('diagnostics-check-lsp'),

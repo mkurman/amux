@@ -1,13 +1,10 @@
 import { create } from "zustand";
 import type { HotkeyAction, Keybinding } from "./types";
 import {
-    readLegacyLocalStorageJson,
     readPersistedJson,
     scheduleJsonWrite,
-    writeLegacyLocalStorageJson,
 } from "./persistence";
 
-const STORAGE_KEY = "amux_keybinds";
 const KEYBINDS_FILE = "keybindings.json";
 
 export const DEFAULT_KEYBINDINGS: Keybinding[] = [
@@ -52,12 +49,10 @@ export const DEFAULT_KEYBINDINGS: Keybinding[] = [
 ];
 
 function loadKeybindings(): Keybinding[] {
-    const legacy = readLegacyLocalStorageJson<Keybinding[]>(STORAGE_KEY);
-    return Array.isArray(legacy) ? legacy : DEFAULT_KEYBINDINGS;
+    return DEFAULT_KEYBINDINGS;
 }
 
 function persistKeybindings(bindings: Keybinding[]) {
-    writeLegacyLocalStorageJson(STORAGE_KEY, bindings);
     scheduleJsonWrite(KEYBINDS_FILE, bindings, 250);
 }
 
@@ -121,7 +116,6 @@ export async function hydrateKeybindStore(): Promise<void> {
     const diskBindings = await readPersistedJson<Keybinding[]>(KEYBINDS_FILE);
     if (Array.isArray(diskBindings) && diskBindings.length > 0) {
         useKeybindStore.setState({ bindings: diskBindings });
-        writeLegacyLocalStorageJson(STORAGE_KEY, diskBindings);
         return;
     }
 

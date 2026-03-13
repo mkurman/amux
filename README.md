@@ -316,6 +316,18 @@ When building a plugin-backed feature:
 
 The coding-agents feature follows this model: a frontend plugin-backed UI, an Electron discovery bridge for PATH probing, and launch through the existing terminal pane/session path.
 
+Built-in runtime profiles now include richer support for:
+
+- `Hermes Agent`: interactive CLI, one-shot task mode, gateway mode, config detection under `~/.hermes`, and MCP-oriented setup hints.
+- `pi.dev`: interactive CLI, one-shot print mode, RPC mode, and config/session detection under `~/.pi/agent`.
+- `OpenClaw`: direct agent mode, gateway runtime mode, config detection under `~/.openclaw`, and local gateway reachability checks for `127.0.0.1:18789`.
+
+The assistant panel now also includes an `AI Training` surface with first-class launch and health support for:
+
+- `Prime Intellect Verifiers`: lab setup, environment init, evaluation run, and eval TUI workflows.
+- `AutoResearch`: workspace-aware prepare and train flows for the Karpathy repo workflow.
+- `AutoRL`: workspace-aware virtualenv setup and evaluator runs for the Simverse-backed scaffold.
+
 ### MCP Server Registration
 
 Register `amux-mcp` with Claude Code, Cursor, or any MCP-compatible client:

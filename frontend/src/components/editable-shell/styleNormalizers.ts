@@ -22,7 +22,6 @@ export function shouldPreserveFillLayout(style: React.CSSProperties): boolean {
 export function normalizeWrapperStyle({
     style,
     resizable,
-    resizeAxis,
     minWidth,
     minHeight,
     maxWidth,
@@ -32,11 +31,8 @@ export function normalizeWrapperStyle({
         ...(style ?? {}),
     };
 
-    if (resizable !== undefined) {
-        wrapperStyle.resize = resizable ? (resizeAxis ?? "both") : "none";
-        if (resizable && wrapperStyle.overflow === undefined) {
-            wrapperStyle.overflow = "auto";
-        }
+    if (resizable && wrapperStyle.overflow === undefined) {
+        wrapperStyle.overflow = "auto";
     }
 
     if (minWidth !== undefined) wrapperStyle.minWidth = minWidth;

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { useAgentStore } from "./agentStore";
 import { useSettingsStore } from "./settingsStore";
 import type { AmuxSettings } from "./types";
-import { readLegacyLocalStorageJson, readPersistedJson, readPersistedText, scheduleJsonWrite, scheduleTextWrite, writeLegacyLocalStorageJson } from "./persistence";
+import { readPersistedJson, readPersistedText, scheduleJsonWrite, scheduleTextWrite } from "./persistence";
 import { useSnippetStore } from "./snippetStore";
 
 export type RiskLevel = "medium" | "high" | "critical";
@@ -117,7 +117,6 @@ type PersistedMissionState = {
     sessionAllowlist?: Record<string, string[]>;
 };
 
-const STORAGE_KEY = "amux_agent_mission";
 const MISSION_DIR = "agent-mission";
 const OPERATIONAL_FILE = `${MISSION_DIR}/operational.json`;
 const COGNITIVE_FILE = `${MISSION_DIR}/cognitive.json`;
@@ -203,21 +202,6 @@ function extractCognitiveSegments(text: string): Array<{ source: "inner-monologu
     return matches;
 }
 
-function saveLegacyState(state: PersistedMissionState): void {
-    writeLegacyLocalStorageJson(STORAGE_KEY, state);
-}
-
-function loadLegacyState(): PersistedMissionState {
-    const parsed = readLegacyLocalStorageJson<PersistedMissionState>(STORAGE_KEY);
-    return {
-        operationalEvents: Array.isArray(parsed?.operationalEvents) ? parsed.operationalEvents : [],
-        cognitiveEvents: Array.isArray(parsed?.cognitiveEvents) ? parsed.cognitiveEvents : [],
-        contextSnapshots: Array.isArray(parsed?.contextSnapshots) ? parsed.contextSnapshots : [],
-        approvals: Array.isArray(parsed?.approvals) ? parsed.approvals : [],
-        sessionAllowlist: parsed?.sessionAllowlist ?? {},
-    };
-}
-
 function syncCounters(state: PersistedMissionState): void {
     for (const event of state.operationalEvents ?? []) {
         const match = /^op_(\d+)$/.exec(event.id);
@@ -245,8 +229,6 @@ function persistMissionState(state: PersistedMissionState): void {
         approvals: limitItems(state.approvals ?? [], MAX_APPROVALS),
         sessionAllowlist: state.sessionAllowlist ?? {},
     };
-
-    saveLegacyState(payload);
     scheduleJsonWrite(OPERATIONAL_FILE, payload.operationalEvents, 200);
     scheduleJsonWrite(COGNITIVE_FILE, payload.cognitiveEvents, 200);
     scheduleJsonWrite(CONTEXT_FILE, payload.contextSnapshots, 200);
@@ -360,7 +342,13 @@ export function assessCommandRisk(
     };
 }
 
-const initialState = loadLegacyState();
+const initialState: PersistedMissionState = {
+    operationalEvents: [],
+    cognitiveEvents: [],
+    contextSnapshots: [],
+    approvals: [],
+    sessionAllowlist: {},
+};
 syncCounters(initialState);
 
 export interface AgentMissionState {
@@ -749,13 +737,12 @@ export async function hydrateAgentMissionStore(): Promise<void> {
         readPersistedText(USER_FILE),
     ]);
 
-    const fallback = loadLegacyState();
     useAgentMissionStore.getState().hydrate({
-        operationalEvents: operationalEvents ?? fallback.operationalEvents,
-        cognitiveEvents: cognitiveEvents ?? fallback.cognitiveEvents,
-        contextSnapshots: contextSnapshots ?? fallback.contextSnapshots,
-        approvals: approvals ?? fallback.approvals,
-        sessionAllowlist: sessionAllowlist ?? fallback.sessionAllowlist,
+        operationalEvents: operationalEvents ?? [],
+        cognitiveEvents: cognitiveEvents ?? [],
+        contextSnapshots: contextSnapshots ?? [],
+        approvals: approvals ?? [],
+        sessionAllowlist: sessionAllowlist ?? {},
         memory: {
             frozenSnapshot: frozenSnapshot ?? defaultFrozenSnapshot(),
             userProfile: userProfile ?? defaultUserProfile(),

@@ -1181,6 +1181,15 @@ textarea::placeholder {
   }
 }
 
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes glow-pulse {
   0%, 100% {
     box-shadow: 0 0 8px var(--accent-glow);

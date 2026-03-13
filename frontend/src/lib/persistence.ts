@@ -117,24 +117,3 @@ export async function flushPendingWrites(): Promise<void> {
 
     await Promise.all(writes.map((pending) => flushWrite(pending)));
 }
-
-export function readLegacyLocalStorageJson<T>(storageKey: string): T | null {
-    if (typeof window === "undefined") return null;
-
-    try {
-        const raw = window.localStorage.getItem(storageKey);
-        return raw ? (JSON.parse(raw) as T) : null;
-    } catch {
-        return null;
-    }
-}
-
-export function writeLegacyLocalStorageJson(storageKey: string, value: unknown): void {
-    if (typeof window === "undefined") return;
-
-    try {
-        window.localStorage.setItem(storageKey, JSON.stringify(value));
-    } catch {
-        // Ignore storage failures.
-    }
-}

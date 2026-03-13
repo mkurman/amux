@@ -2,65 +2,30 @@ import { create } from "zustand";
 import { TranscriptEntry, TranscriptReason, WorkspaceId, SurfaceId, PaneId } from "./types";
 import { DEFAULT_SETTINGS } from "./types";
 import {
-  readLegacyLocalStorageJson,
   readPersistedJson,
   scheduleJsonWrite,
   schedulePathDelete,
   scheduleTextWrite,
-  writeLegacyLocalStorageJson,
 } from "./persistence";
+import { useSettingsStore } from "./settingsStore";
 
 let _txId = 0;
-const STORAGE_KEY = "amux_transcripts";
 const TRANSCRIPT_INDEX_FILE = "transcript-index.json";
 const TRANSCRIPT_DIR = "transcripts";
 const LIVE_TRANSCRIPT_DIR = `${TRANSCRIPT_DIR}/live`;
 
 function readRetentionDays(): number {
-  if (typeof window === "undefined") {
-    return DEFAULT_SETTINGS.transcriptRetentionDays;
-  }
-
-  try {
-    const raw = window.localStorage.getItem("amux_settings");
-    if (!raw) {
-      return DEFAULT_SETTINGS.transcriptRetentionDays;
-    }
-
-    const parsed = JSON.parse(raw) as {
-      settings?: { transcriptRetentionDays?: unknown };
-      transcriptRetentionDays?: unknown;
-    };
-    const candidate = parsed.settings?.transcriptRetentionDays ?? parsed.transcriptRetentionDays;
-    const retentionDays = typeof candidate === "number" ? candidate : Number(candidate);
-
-    return Number.isFinite(retentionDays)
-      ? retentionDays
-      : DEFAULT_SETTINGS.transcriptRetentionDays;
-  } catch {
-    return DEFAULT_SETTINGS.transcriptRetentionDays;
-  }
+  const retentionDays = useSettingsStore.getState().settings.transcriptRetentionDays;
+  return Number.isFinite(retentionDays)
+    ? retentionDays
+    : DEFAULT_SETTINGS.transcriptRetentionDays;
 }
 
 function loadTranscripts(): TranscriptEntry[] {
-  try {
-    const parsed = readLegacyLocalStorageJson<TranscriptEntry[]>(STORAGE_KEY) ?? [];
-    let maxId = 0;
-    for (const entry of parsed) {
-      const match = /^tx_(\d+)$/.exec(entry.id);
-      if (match) {
-        maxId = Math.max(maxId, Number(match[1]));
-      }
-    }
-    _txId = maxId;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return [];
 }
 
 function persistTranscripts(transcripts: TranscriptEntry[]) {
-  writeLegacyLocalStorageJson(STORAGE_KEY, transcripts);
   scheduleJsonWrite(TRANSCRIPT_INDEX_FILE, transcripts, 200);
 }
 
@@ -233,6 +198,14 @@ export async function hydrateTranscriptStore(): Promise<void> {
       ...entry,
       filePath: entry.filePath ?? entry.filename,
     }));
+    let maxId = 0;
+    for (const entry of hydrated) {
+      const match = /^tx_(\d+)$/.exec(entry.id);
+      if (match) {
+        maxId = Math.max(maxId, Number(match[1]));
+      }
+    }
+    _txId = maxId;
     useTranscriptStore.getState().hydrateTranscripts(hydrated);
     return;
   }

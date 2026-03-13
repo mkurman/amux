@@ -257,6 +257,25 @@ const mergeBuilderMeta = (
   };
 };
 
+const applyBuilderRuntimePropFallbacks = (
+  props: Record<string, unknown> | undefined,
+  builder: Partial<UINodeBuilderMeta> | undefined,
+): Record<string, unknown> | undefined => {
+  if (!props && builder?.resizable === undefined && builder?.resizeAxis === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(props ?? {}),
+    ...((props?.resizable === undefined && builder?.resizable !== undefined)
+      ? { resizable: builder.resizable }
+      : {}),
+    ...((props?.resizeAxis === undefined && builder?.resizeAxis !== undefined)
+      ? { resizeAxis: builder.resizeAxis }
+      : {}),
+  };
+};
+
 const normalizeViewNode = (
   node: UIViewNode,
   blocks: Record<string, UIViewBlockDefinition> | undefined,
@@ -296,9 +315,12 @@ const normalizeViewNode = (
       nodeId,
       type: resolved.type,
       command: node.command ?? resolved.command,
-      props: mergeNodeProps(
-        mergeNodeProps(resolved.props, definition.defaults),
-        node.props,
+      props: applyBuilderRuntimePropFallbacks(
+        mergeNodeProps(
+          mergeNodeProps(resolved.props, definition.defaults),
+          node.props,
+        ),
+        node.builder,
       ),
       ...(builder ? { builder } : {}),
       ...(mergedChildren ? { children: mergedChildren } : {}),
@@ -320,7 +342,9 @@ const normalizeViewNode = (
   return {
     nodeId,
     type: node.type,
-    ...(node.props ? { props: node.props } : {}),
+    ...(applyBuilderRuntimePropFallbacks(node.props, node.builder)
+      ? { props: applyBuilderRuntimePropFallbacks(node.props, node.builder) }
+      : {}),
     ...(node.command ? { command: node.command } : {}),
     ...(children ? { children } : {}),
     ...(builder ? { builder } : {}),

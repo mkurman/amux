@@ -25,7 +25,7 @@ dependencies = [
 
 [[package]]
 name = "amux-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "amux-protocol",
  "anyhow",
@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "amux-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "amux-protocol",
  "anyhow",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "amux-gateway"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "amux-protocol",
  "anyhow",
@@ -92,7 +92,7 @@ dependencies = [
 
 [[package]]
 name = "amux-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "amux-protocol",
  "anyhow",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "amux-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bincode",
  "bytes",

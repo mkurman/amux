@@ -5,6 +5,7 @@ export interface UINodeBuilderMeta {
   locked?: boolean;
   droppable?: boolean;
   resizable?: boolean;
+  resizeAxis?: "both" | "horizontal" | "vertical";
   movable?: boolean;
   align?: "start" | "center" | "end" | "stretch";
   slot?: string;
@@ -75,6 +76,7 @@ const UINodeBuilderMetaSchema: z.ZodType<UINodeBuilderMeta> = z.object({
   locked: z.boolean().optional(),
   droppable: z.boolean().optional(),
   resizable: z.boolean().optional(),
+  resizeAxis: z.enum(["both", "horizontal", "vertical"]).optional(),
   movable: z.boolean().optional(),
   align: z.enum(["start", "center", "end", "stretch"]).optional(),
   slot: z.string().optional(),

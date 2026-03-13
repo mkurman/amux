@@ -10,6 +10,7 @@ import { getTerminalController } from "../../lib/terminalRegistry";
 import { useTranscriptStore } from "../../lib/transcriptStore";
 import { useWorkspaceStore } from "../../lib/workspaceStore";
 import { AgentExecutionGraph } from "../AgentExecutionGraph";
+import { AITrainingView } from "./AITrainingView";
 import { ChatView } from "./ChatView";
 import { CodingAgentsView } from "./CodingAgentsView";
 import { ContextView } from "./ContextView";
@@ -20,7 +21,7 @@ import { UsageView } from "./UsageView";
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
-export type AgentChatPanelView = "threads" | "chat" | "trace" | "usage" | "context" | "graph" | "coding-agents";
+export type AgentChatPanelView = "threads" | "chat" | "trace" | "usage" | "context" | "graph" | "coding-agents" | "ai-training";
 
 type AgentStoreState = ReturnType<typeof useAgentStore.getState>;
 type AgentMissionStoreState = ReturnType<typeof useAgentMissionStore.getState>;
@@ -192,8 +193,12 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
         let threadId = activeThreadId;
         if (!threadId) {
             const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+            const surfaceId = useWorkspaceStore.getState().activeSurface()?.id ?? null;
+            const paneId = useWorkspaceStore.getState().activePaneId();
             threadId = createThread({
                 workspaceId,
+                surfaceId,
+                paneId,
                 title: text.slice(0, 50),
             });
             setView("chat");
@@ -243,6 +248,24 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
             let allCurrentMessages = useAgentStore.getState().getThreadMessages(currentThreadId);
             let apiMessages = messagesToApiFormat(allCurrentMessages.slice(0, -1));
 
+            const persistReasoningTrace = (reasoning: string) => {
+                const normalized = reasoning.trim();
+                if (!normalized) return;
+
+                const thread = useAgentStore.getState().threads.find((entry) => entry.id === currentThreadId);
+                const paneId = thread?.paneId ?? useWorkspaceStore.getState().activePaneId() ?? "agent";
+                const workspaceId = thread?.workspaceId ?? useWorkspaceStore.getState().activeWorkspaceId;
+                const surfaceId = thread?.surfaceId ?? useWorkspaceStore.getState().activeSurface()?.id ?? null;
+
+                useAgentMissionStore.getState().recordCognitiveOutput({
+                    paneId,
+                    workspaceId,
+                    surfaceId,
+                    sessionId: null,
+                    text: `<INNER_MONOLOGUE>\n${normalized}\n</INNER_MONOLOGUE>`,
+                });
+            };
+
             while (loopCount < maxToolLoops) {
                 loopCount += 1;
                 let accumulated = "";
@@ -274,6 +297,8 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
                             if (chunk.content && chunk.content !== accumulated) accumulated = chunk.content;
                             if (chunk.reasoning) accumulatedReasoning = chunk.reasoning;
 
+                            persistReasoningTrace(accumulatedReasoning);
+
                             const elapsedSeconds = Math.max(0.001, (Date.now() - responseStartedAt) / 1000);
                             const outputTokens = Number(chunk.outputTokens ?? 0);
                             const inputTokens = Number(chunk.inputTokens ?? 0);
@@ -304,6 +329,8 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
                             roundToolCalls = chunk.toolCalls;
                             if (chunk.reasoning) accumulatedReasoning = chunk.reasoning;
                             if (chunk.content) accumulated = chunk.content;
+
+                            persistReasoningTrace(accumulatedReasoning);
 
                             updateLastAssistantMessage(currentThreadId, accumulated || "Calling tools...", false, {
                                 reasoning: accumulatedReasoning || undefined,
@@ -431,6 +458,7 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
         { id: "context", label: "Context", count: null },
         { id: "graph", label: "Graph", count: null },
         { id: "coding-agents", label: "Coding Agents", count: null },
+        { id: "ai-training", label: "AI Training", count: null },
     ] satisfies Array<{ id: AgentChatPanelView; label: string; count: number | null }>;
 
     const value = useMemo<AgentChatPanelRuntimeValue>(() => ({
@@ -565,7 +593,7 @@ export function AgentChatPanelScaffold({ style, className }: { style?: CSSProper
 
 export function AgentChatPanelHeader() {
     const runtime = useAgentChatPanelRuntime();
-    const { view, activeThread, setActiveThread, setView, togglePanel, createThread, threads, pendingApprovals, scopedCognitiveEvents, snapshots } = runtime;
+    const { view, activeThread, setActiveThread, setView, togglePanel, createThread } = runtime;
 
     return (
         <div
@@ -625,15 +653,6 @@ export function AgentChatPanelHeader() {
                     </button>
                 </div>
             </div>
-
-            <MetricRibbon
-                items={[
-                    { label: "Threads", value: String(threads.length), accent: "var(--text-primary)" },
-                    { label: "Approvals", value: String(pendingApprovals.length), accent: pendingApprovals.length > 0 ? "var(--approval)" : "var(--text-muted)" },
-                    { label: "Trace", value: String(scopedCognitiveEvents.length), accent: "var(--reasoning)" },
-                    { label: "Snapshots", value: String(snapshots.length), accent: "var(--timeline)" },
-                ]}
-            />
         </div>
     );
 }
@@ -688,6 +707,7 @@ export function AgentChatPanelCurrentSurface() {
     if (view === "usage") return <AgentChatPanelUsageSurface />;
     if (view === "context") return <AgentChatPanelContextSurface />;
     if (view === "coding-agents") return <AgentChatPanelCodingAgentsSurface />;
+    if (view === "ai-training") return <AgentChatPanelAITrainingSurface />;
     return <AgentChatPanelGraphSurface />;
 }
 
@@ -789,6 +809,10 @@ export function AgentChatPanelGraphSurface() {
 
 export function AgentChatPanelCodingAgentsSurface() {
     return <CodingAgentsView />;
+}
+
+export function AgentChatPanelAITrainingSurface() {
+    return <AITrainingView />;
 }
 
 function useAgentChatPanelGraphData() {
