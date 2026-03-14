@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SURFACE_ICONS, type SurfaceRecord } from "./shared";
+import { iconChoices, iconGlyph, iconLabel, normalizeIconId } from "../../lib/iconRegistry";
 
 export function SurfaceTabItem({
     surface,
@@ -22,9 +23,10 @@ export function SurfaceTabItem({
     onRename: (name: string) => void;
     onSetIcon: (icon: string) => void;
 }) {
+    const rootRef = useRef<HTMLDivElement | null>(null);
     const [editing, setEditing] = useState(false);
     const [draftName, setDraftName] = useState(surface.name);
-    const [draftIcon, setDraftIcon] = useState(surface.icon);
+    const [iconMenuOpen, setIconMenuOpen] = useState(false);
     const commitTimeoutRef = useRef<number | null>(null);
 
     const cancelScheduledCommit = () => {
@@ -37,7 +39,6 @@ export function SurfaceTabItem({
     const commit = () => {
         cancelScheduledCommit();
         onRename(draftName.trim() || surface.name);
-        onSetIcon(draftIcon.trim() || surface.icon);
         setEditing(false);
     };
 
@@ -49,11 +50,25 @@ export function SurfaceTabItem({
 
     useEffect(() => () => cancelScheduledCommit(), []);
 
+    useEffect(() => {
+        if (!iconMenuOpen) return;
+        const onPointerDown = (event: MouseEvent) => {
+            if (rootRef.current?.contains(event.target as Node)) {
+                return;
+            }
+            setIconMenuOpen(false);
+        };
+        window.addEventListener("mousedown", onPointerDown);
+        return () => window.removeEventListener("mousedown", onPointerDown);
+    }, [iconMenuOpen]);
+
     return (
         <div
+            ref={rootRef}
             onClick={onSelect}
             onDoubleClick={() => setEditing(true)}
             style={{
+                position: "relative",
                 display: "flex",
                 alignItems: "center",
                 gap: "var(--space-2)",
@@ -70,7 +85,25 @@ export function SurfaceTabItem({
                 transition: "all var(--transition-fast)",
             }}
         >
-            <span style={{ fontSize: "var(--text-xs)", textTransform: "uppercase", opacity: 0.8 }}>{surface.icon}</span>
+            <button
+                type="button"
+                onClick={(event) => {
+                    event.stopPropagation();
+                    setIconMenuOpen((value) => !value);
+                }}
+                title={`Icon: ${iconLabel(surface.icon)}`}
+                style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    cursor: "pointer",
+                    fontSize: "var(--text-sm)",
+                    padding: 0,
+                    lineHeight: 1,
+                }}
+            >
+                {iconGlyph(surface.icon)}
+            </button>
 
             {editing ? (
                 <div style={{ display: "flex", gap: "var(--space-1)" }} onClick={(event) => event.stopPropagation()}>
@@ -83,7 +116,6 @@ export function SurfaceTabItem({
                             if (event.key === "Enter") commit();
                             if (event.key === "Escape") {
                                 setDraftName(surface.name);
-                                setDraftIcon(surface.icon);
                                 setEditing(false);
                             }
                         }}
@@ -99,25 +131,6 @@ export function SurfaceTabItem({
                             width: 100,
                         }}
                     />
-                    <select
-                        value={draftIcon}
-                        onChange={(event) => setDraftIcon(event.target.value)}
-                        onFocus={cancelScheduledCommit}
-                        onBlur={scheduleCommit}
-                        style={{
-                            background: "var(--bg-surface)",
-                            border: "1px solid var(--glass-border)",
-                            color: "var(--text-primary)",
-                            borderRadius: "var(--radius-sm)",
-                            padding: "2px 6px",
-                            fontSize: "var(--text-xs)",
-                            outline: "none",
-                        }}
-                    >
-                        {SURFACE_ICONS.map((icon) => (
-                            <option key={icon} value={icon}>{icon}</option>
-                        ))}
-                    </select>
                 </div>
             ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
@@ -136,7 +149,6 @@ export function SurfaceTabItem({
                         commit();
                     } else {
                         setDraftName(surface.name);
-                        setDraftIcon(surface.icon);
                         setEditing(true);
                     }
                 }}
@@ -178,6 +190,53 @@ export function SurfaceTabItem({
             >
                 ×
             </button>
+
+            {iconMenuOpen ? (
+                <div
+                    onClick={(event) => event.stopPropagation()}
+                    style={{
+                        position: "absolute",
+                        top: 30,
+                        left: 0,
+                        minWidth: 160,
+                        border: "1px solid var(--glass-border)",
+                        borderRadius: "var(--radius-md)",
+                        background: "var(--bg-primary)",
+                        boxShadow: "var(--shadow-sm)",
+                        zIndex: 70,
+                        display: "grid",
+                        gap: 2,
+                        padding: 4,
+                    }}
+                >
+                    {iconChoices(SURFACE_ICONS).map((icon) => (
+                        <button
+                            key={icon.id}
+                            type="button"
+                            onClick={() => {
+                                onSetIcon(normalizeIconId(icon.id));
+                                setIconMenuOpen(false);
+                            }}
+                            style={{
+                                border: "none",
+                                background: "transparent",
+                                color: "var(--text-secondary)",
+                                cursor: "pointer",
+                                textAlign: "left",
+                                fontSize: "var(--text-xs)",
+                                borderRadius: "var(--radius-sm)",
+                                padding: "6px 8px",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                            }}
+                        >
+                            <span style={{ minWidth: 24, textAlign: "center", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{icon.glyph}</span>
+                            <span>{icon.label}</span>
+                        </button>
+                    ))}
+                </div>
+            ) : null}
         </div>
     );
 }

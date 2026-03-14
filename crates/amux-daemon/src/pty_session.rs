@@ -5,16 +5,18 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use amux_protocol::{
+    DaemonMessage, ManagedCommandRequest, ManagedCommandSource, SessionId, SnapshotInfo,
+};
 use anyhow::Result;
 use base64::Engine;
-use amux_protocol::{DaemonMessage, ManagedCommandRequest, ManagedCommandSource, SessionId, SnapshotInfo};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use tokio::sync::broadcast;
 
 use crate::history::{HistoryStore, ManagedHistoryRecord};
+use crate::network;
 use crate::osc::parse_osc_notifications;
 use crate::sandbox;
-use crate::network;
 
 /// Rolling scrollback buffer capacity (bytes).
 const SCROLLBACK_CAPACITY: usize = 1024 * 1024; // 1 MiB
@@ -108,7 +110,9 @@ impl PtySession {
         // Broadcast channel for output fanout to attached clients.
         let (tx, _) = broadcast::channel(256);
 
-        let scrollback = Arc::new(std::sync::Mutex::new(Vec::with_capacity(SCROLLBACK_CAPACITY)));
+        let scrollback = Arc::new(std::sync::Mutex::new(Vec::with_capacity(
+            SCROLLBACK_CAPACITY,
+        )));
 
         let dead = Arc::new(AtomicBool::new(false));
         let managed_lane = Arc::new(std::sync::Mutex::new(ManagedLaneState::default()));
@@ -179,7 +183,10 @@ impl PtySession {
     ) -> Result<usize> {
         let mut lane = self.managed_lane.lock().unwrap();
         let immediate_dispatch = lane.active.is_some()
-            && matches!(request.source, ManagedCommandSource::Agent | ManagedCommandSource::Gateway);
+            && matches!(
+                request.source,
+                ManagedCommandSource::Agent | ManagedCommandSource::Gateway
+            );
 
         if immediate_dispatch {
             // Assistant/gateway commands should remain responsive even if a
@@ -255,6 +262,27 @@ impl PtySession {
         }
     }
 
+    /// Preload output bytes into session scrollback and current subscribers.
+    pub fn preload_output(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+
+        {
+            let mut sb = self.scrollback.lock().unwrap();
+            sb.extend_from_slice(data);
+            if sb.len() > SCROLLBACK_CAPACITY {
+                let excess = sb.len() - SCROLLBACK_CAPACITY;
+                sb.drain(..excess);
+            }
+        }
+
+        let _ = self.tx.send(DaemonMessage::Output {
+            id: self.id,
+            data: data.to_vec(),
+        });
+    }
+
     pub fn title(&self) -> Option<&str> {
         None // TODO: Parse OSC title sequences
     }
@@ -265,6 +293,22 @@ impl PtySession {
 
     pub fn cwd(&self) -> Option<&str> {
         self.cwd.as_deref()
+    }
+
+    /// Resolve the most current working directory for this PTY process.
+    /// Falls back to the startup cwd when process cwd cannot be queried.
+    pub fn resolved_cwd(&self) -> Option<String> {
+        #[cfg(unix)]
+        {
+            if let Some(pid) = self.child.lock().unwrap().process_id() {
+                let proc_cwd = format!("/proc/{pid}/cwd");
+                if let Ok(path) = std::fs::read_link(proc_cwd) {
+                    return Some(path.to_string_lossy().into_owned());
+                }
+            }
+        }
+
+        self.cwd.clone()
     }
 
     pub fn shell(&self) -> Option<&str> {
@@ -337,10 +381,7 @@ fn pty_reader_loop(
                 }
 
                 // Broadcast to all attached clients (ignore if no receivers).
-                let _ = tx.send(DaemonMessage::Output {
-                    id,
-                    data,
-                });
+                let _ = tx.send(DaemonMessage::Output { id, data });
 
                 for notification in notifications {
                     let _ = tx.send(DaemonMessage::OscNotification { id, notification });
@@ -370,7 +411,11 @@ fn pty_reader_loop(
                                 let mut lane = managed_lane.lock().unwrap();
                                 let completed = lane.active.take();
                                 if let Some(next) = lane.queue.pop_front() {
-                                    if let Err(error) = dispatch_managed_command(&master_write, &next.request, cwd.as_deref()) {
+                                    if let Err(error) = dispatch_managed_command(
+                                        &master_write,
+                                        &next.request,
+                                        cwd.as_deref(),
+                                    ) {
                                         tracing::error!(%id, error = %error, "failed to dispatch queued managed command");
                                     } else {
                                         lane.active = Some(ActiveManagedCommand {
@@ -401,10 +446,14 @@ fn pty_reader_loop(
                                     workspace_id: workspace_id.clone(),
                                     command: active.request.command,
                                     rationale: active.request.rationale,
-                                    source: format!("{:?}", active.request.source).to_ascii_lowercase(),
+                                    source: format!("{:?}", active.request.source)
+                                        .to_ascii_lowercase(),
                                     exit_code,
                                     duration_ms: Some(duration_ms),
-                                    snapshot_path: active.snapshot.as_ref().map(|snapshot| snapshot.path.clone()),
+                                    snapshot_path: active
+                                        .snapshot
+                                        .as_ref()
+                                        .map(|snapshot| snapshot.path.clone()),
                                 };
                                 if let Err(error) = history.record_managed_finish(&record) {
                                     tracing::error!(%id, error = %error, cwd = ?cwd, "failed to persist managed history");
@@ -414,7 +463,9 @@ fn pty_reader_loop(
                                 if record.exit_code == Some(0) {
                                     if let Ok(candidates) = history.detect_skill_candidates() {
                                         for (title, _hits) in candidates.iter().take(1) {
-                                            if let Ok((_title, path)) = history.generate_skill(Some(title), Some(title)) {
+                                            if let Ok((_title, path)) =
+                                                history.generate_skill(Some(title), Some(title))
+                                            {
                                                 tracing::info!(skill_path = %path, "auto-generated skill from workflow pattern");
                                             }
                                         }
@@ -440,11 +491,7 @@ fn dispatch_managed_command(
     fallback_cwd: Option<&str>,
 ) -> Result<()> {
     let command_line = if request.sandbox_enabled {
-        let workspace_root = request
-            .cwd
-            .as_deref()
-            .or(fallback_cwd)
-            .unwrap_or(".");
+        let workspace_root = request.cwd.as_deref().or(fallback_cwd).unwrap_or(".");
         let sandbox_impl = sandbox::detect_sandbox();
         let wrapped = sandbox_impl.wrap(&request.command, workspace_root, request.allow_network);
         tracing::info!(
@@ -661,16 +708,32 @@ fn detect_windows_shell() -> String {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        candidates.push(PathBuf::from(&program_files).join("PowerShell").join("7").join("pwsh.exe"));
+        candidates.push(
+            PathBuf::from(&program_files)
+                .join("PowerShell")
+                .join("7")
+                .join("pwsh.exe"),
+        );
     }
 
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        candidates.push(PathBuf::from(&local_app_data).join("Microsoft").join("WindowsApps").join("pwsh.exe"));
+        candidates.push(
+            PathBuf::from(&local_app_data)
+                .join("Microsoft")
+                .join("WindowsApps")
+                .join("pwsh.exe"),
+        );
     }
 
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let system_root = PathBuf::from(system_root);
-        candidates.push(system_root.join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe"));
+        candidates.push(
+            system_root
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe"),
+        );
         candidates.push(system_root.join("System32").join("cmd.exe"));
     }
 

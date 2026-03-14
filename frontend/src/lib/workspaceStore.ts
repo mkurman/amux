@@ -5,6 +5,12 @@ import {
   WorkspaceId,
   SurfaceId,
   PaneId,
+  SurfaceLayoutMode,
+  CanvasPanel,
+  CanvasState,
+  CanvasViewSnapshot,
+  CanvasPanelStatus,
+  PersistedCanvasPanel,
 } from "./types";
 import {
   BspTree,
@@ -28,6 +34,7 @@ import { PersistedSession } from "./types";
 import { useSettingsStore } from "./settingsStore";
 import { useTranscriptStore } from "./transcriptStore";
 import { getTerminalSnapshot } from "./terminalRegistry";
+import { normalizeIconId } from "./iconRegistry";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,16 +87,211 @@ function pickAccent(idx: number): string {
   return ACCENT_COLORS[idx % ACCENT_COLORS.length];
 }
 
-function createDefaultSurface(workspaceId: WorkspaceId): Surface {
+const CANVAS_MIN_ZOOM = 0.04;
+const CANVAS_MAX_ZOOM = 2.2;
+const CANVAS_GRID_SIZE = 32;
+const DEFAULT_CANVAS_PANEL_WIDTH = 760;
+const DEFAULT_CANVAS_PANEL_HEIGHT = 440;
+const CANVAS_AUTO_GAP_X = 48;
+const CANVAS_AUTO_GAP_Y = 40;
+
+function snapCanvasCoord(value: number): number {
+  return Math.round(value / CANVAS_GRID_SIZE) * CANVAS_GRID_SIZE;
+}
+
+function createDefaultCanvasState(): CanvasState {
+  return {
+    panX: 0,
+    panY: 0,
+    zoomLevel: 1,
+    previousView: null,
+    focusRequestNonce: 0,
+  };
+}
+
+function sanitizeCanvasState(value: Partial<CanvasState> | undefined): CanvasState {
+  const zoom = typeof value?.zoomLevel === "number" ? value.zoomLevel : 1;
+  const previousView = value?.previousView && typeof value.previousView === "object"
+    ? {
+      panX: Number.isFinite(value.previousView.panX) ? value.previousView.panX : 0,
+      panY: Number.isFinite(value.previousView.panY) ? value.previousView.panY : 0,
+      zoomLevel: Number.isFinite(value.previousView.zoomLevel)
+        ? Math.max(CANVAS_MIN_ZOOM, Math.min(CANVAS_MAX_ZOOM, value.previousView.zoomLevel))
+        : 1,
+    }
+    : null;
+
+  return {
+    panX: Number.isFinite(value?.panX) ? Number(value?.panX) : 0,
+    panY: Number.isFinite(value?.panY) ? Number(value?.panY) : 0,
+    zoomLevel: Math.max(CANVAS_MIN_ZOOM, Math.min(CANVAS_MAX_ZOOM, Number.isFinite(zoom) ? zoom : 1)),
+    previousView,
+    focusRequestNonce: Number.isFinite(value?.focusRequestNonce)
+      ? Math.max(0, Math.floor(Number(value?.focusRequestNonce)))
+      : 0,
+  };
+}
+
+function defaultCanvasPanelPosition(index: number): { x: number; y: number } {
+  const col = index % 3;
+  const row = Math.floor(index / 3);
+  return {
+    x: snapCanvasCoord(80 + col * (DEFAULT_CANVAS_PANEL_WIDTH + 48)),
+    y: snapCanvasCoord(60 + row * (DEFAULT_CANVAS_PANEL_HEIGHT + 48)),
+  };
+}
+
+function buildCanvasPanel(opts: {
+  paneId: string;
+  paneName?: string;
+  index: number;
+  persisted?: Partial<PersistedCanvasPanel>;
+  status?: CanvasPanelStatus;
+}): CanvasPanel {
+  const fallbackPos = defaultCanvasPanelPosition(opts.index);
+  return {
+    id: typeof opts.persisted?.id === "string" && opts.persisted.id
+      ? opts.persisted.id
+      : `cp_${opts.paneId}`,
+    paneId: opts.paneId,
+    title: opts.paneName ?? `Pane ${opts.index + 1}`,
+    icon: normalizeIconId(opts.persisted?.icon),
+    x: Number.isFinite(opts.persisted?.x) ? Number(opts.persisted?.x) : fallbackPos.x,
+    y: Number.isFinite(opts.persisted?.y) ? Number(opts.persisted?.y) : fallbackPos.y,
+    width: Number.isFinite(opts.persisted?.width)
+      ? Math.max(320, Number(opts.persisted?.width))
+      : DEFAULT_CANVAS_PANEL_WIDTH,
+    height: Number.isFinite(opts.persisted?.height)
+      ? Math.max(220, Number(opts.persisted?.height))
+      : DEFAULT_CANVAS_PANEL_HEIGHT,
+    status: opts.status ?? opts.persisted?.status ?? "running",
+    sessionId: typeof opts.persisted?.sessionId === "string" ? opts.persisted.sessionId : null,
+    lastActivityAt: Number.isFinite(opts.persisted?.lastActivityAt)
+      ? Number(opts.persisted?.lastActivityAt)
+      : Date.now(),
+  };
+}
+
+function isOverlappingPanel(
+  panels: CanvasPanel[],
+  candidate: { x: number; y: number; width: number; height: number }
+): boolean {
+  return panels.some((panel) => (
+    candidate.x < panel.x + panel.width + 20
+    && candidate.x + candidate.width + 20 > panel.x
+    && candidate.y < panel.y + panel.height + 20
+    && candidate.y + candidate.height + 20 > panel.y
+  ));
+}
+
+function findCanvasPlacement(surface: Surface, anchorPaneId?: string | null): { x: number; y: number } {
+  const anchor = surface.canvasPanels.find((panel) => panel.paneId === anchorPaneId)
+    ?? surface.canvasPanels.find((panel) => panel.paneId === surface.activePaneId)
+    ?? surface.canvasPanels[surface.canvasPanels.length - 1];
+  const stepX = DEFAULT_CANVAS_PANEL_WIDTH + CANVAS_AUTO_GAP_X;
+  const stepY = DEFAULT_CANVAS_PANEL_HEIGHT + CANVAS_AUTO_GAP_Y;
+  const baseX = anchor ? anchor.x : 80;
+  const baseY = anchor ? anchor.y : 60;
+  const candidateSize = { width: DEFAULT_CANVAS_PANEL_WIDTH, height: DEFAULT_CANVAS_PANEL_HEIGHT };
+
+  // Prefer appending to the right of the anchor on the same row first.
+  for (let rowOffset = 0; rowOffset < 18; rowOffset += 1) {
+    for (let colOffset = 1; colOffset < 18; colOffset += 1) {
+      const candidate = {
+        x: snapCanvasCoord(baseX + colOffset * stepX),
+        y: snapCanvasCoord(baseY + rowOffset * stepY),
+        ...candidateSize,
+      };
+      if (!isOverlappingPanel(surface.canvasPanels, candidate)) {
+        return { x: candidate.x, y: candidate.y };
+      }
+    }
+  }
+
+  for (let rowOffset = 1; rowOffset < 18; rowOffset += 1) {
+    for (let colOffset = 0; colOffset < 18; colOffset += 1) {
+      const candidate = {
+        x: snapCanvasCoord(baseX + colOffset * stepX),
+        y: snapCanvasCoord(baseY - rowOffset * stepY),
+        ...candidateSize,
+      };
+      if (!isOverlappingPanel(surface.canvasPanels, candidate)) {
+        return { x: candidate.x, y: candidate.y };
+      }
+    }
+  }
+
+  return { x: snapCanvasCoord(baseX), y: snapCanvasCoord(baseY) };
+}
+
+function normalizeCanvasPanels(surface: Surface): Surface {
+  if (surface.layoutMode !== "canvas") {
+    return {
+      ...surface,
+      paneIcons: buildPaneIcons(allLeafIds(surface.layout), surface.paneIcons),
+      canvasState: sanitizeCanvasState(surface.canvasState),
+      canvasPanels: [],
+    };
+  }
+
+  const paneIds = allLeafIds(surface.layout);
+  const panelByPaneId = new Map(surface.canvasPanels.map((panel) => [panel.paneId, panel]));
+  const canvasPanels = paneIds.map((paneId, index) => {
+    const existing = panelByPaneId.get(paneId);
+    const base = buildCanvasPanel({
+      paneId,
+      paneName: surface.paneNames[paneId],
+      index,
+      persisted: existing ?? undefined,
+      status: existing?.status,
+    });
+
+    return {
+      ...base,
+      title: surface.paneNames[paneId] ?? base.title,
+      icon: surface.paneIcons?.[paneId] ?? existing?.icon ?? base.icon,
+      status: existing?.status ?? "running",
+      sessionId: existing?.sessionId ?? findLeaf(surface.layout, paneId)?.sessionId ?? null,
+    };
+  });
+
+  const activePaneId = surface.activePaneId && paneIds.includes(surface.activePaneId)
+    ? surface.activePaneId
+    : paneIds[0] ?? null;
+
+  return {
+    ...surface,
+    activePaneId,
+    paneIcons: buildPaneIcons(paneIds, surface.paneIcons),
+    canvasState: sanitizeCanvasState(surface.canvasState),
+    canvasPanels,
+  };
+}
+
+function createDefaultSurface(workspaceId: WorkspaceId, layoutMode: SurfaceLayoutMode = "bsp"): Surface {
   const leaf = createLeaf();
+  const paneNames = { [leaf.id]: "Pane 1" };
+  const paneIcons = { [leaf.id]: "terminal" };
+  const panel = buildCanvasPanel({
+    paneId: leaf.id,
+    paneName: paneNames[leaf.id],
+    persisted: { icon: paneIcons[leaf.id] },
+    index: 0,
+    status: "running",
+  });
+
   return {
     id: newSurfaceId(),
     workspaceId,
-    name: "Terminal",
-    icon: "term",
+    name: layoutMode === "canvas" ? "Infinite Canvas" : "Terminal",
+    icon: layoutMode === "canvas" ? "canvas" : "terminal",
+    layoutMode,
     layout: leaf,
-    paneNames: { [leaf.id]: "Pane 1" },
+    paneNames,
+    paneIcons,
     activePaneId: leaf.id,
+    canvasState: createDefaultCanvasState(),
+    canvasPanels: layoutMode === "canvas" ? [panel] : [],
     createdAt: Date.now(),
   };
 }
@@ -112,9 +314,17 @@ function buildPaneNames(paneIds: PaneId[], existing?: Record<PaneId, string>): R
   return names;
 }
 
-function createDefaultWorkspace(name?: string): Workspace {
+function buildPaneIcons(paneIds: PaneId[], existing?: Record<PaneId, string>): Record<PaneId, string> {
+  const icons: Record<PaneId, string> = {};
+  for (const paneId of paneIds) {
+    icons[paneId] = normalizeIconId(existing?.[paneId]);
+  }
+  return icons;
+}
+
+function createDefaultWorkspace(name?: string, layoutMode: SurfaceLayoutMode = "bsp"): Workspace {
   const id = newWorkspaceId();
-  const surface = createDefaultSurface(id);
+  const surface = createDefaultSurface(id, layoutMode);
   return {
     id,
     name: name ?? `Workspace ${_wsId}`,
@@ -131,13 +341,52 @@ function createDefaultWorkspace(name?: string): Workspace {
   };
 }
 
-function stopPaneSessions(paneIds: string[]) {
+function stopPaneSessions(paneIds: string[], killSessions: boolean = true) {
   const amux = (window as any).tamux ?? (window as any).amux;
   if (!amux?.stopTerminalSession) return;
 
   for (const paneId of paneIds) {
-    void amux.stopTerminalSession(paneId, true);
+    void amux.stopTerminalSession(paneId, killSessions);
   }
+}
+
+function resolvePaneSessionId(workspaces: Workspace[], paneId: PaneId): string | null {
+  for (const workspace of workspaces) {
+    for (const surface of workspace.surfaces) {
+      const leaf = findLeaf(surface.layout, paneId);
+      if (!leaf) continue;
+      const panelSessionId = surface.canvasPanels.find((panel) => panel.paneId === paneId)?.sessionId ?? null;
+      return panelSessionId ?? leaf.sessionId ?? null;
+    }
+  }
+  return null;
+}
+
+function hasAnotherPaneForSession(
+  workspaces: Workspace[],
+  sessionId: string,
+  excludingPaneId: PaneId,
+): boolean {
+  for (const workspace of workspaces) {
+    for (const surface of workspace.surfaces) {
+      const paneIds = allLeafIds(surface.layout);
+      for (const paneId of paneIds) {
+        if (paneId === excludingPaneId) {
+          continue;
+        }
+        const leaf = findLeaf(surface.layout, paneId);
+        if (!leaf) {
+          continue;
+        }
+        const panelSessionId = surface.canvasPanels.find((panel) => panel.paneId === paneId)?.sessionId ?? null;
+        const candidateSessionId = panelSessionId ?? leaf.sessionId ?? null;
+        if (candidateSessionId === sessionId) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 function captureTranscriptForPane(opts: {
@@ -333,7 +582,7 @@ export interface WorkspaceState {
   webBrowserReloadToken: number;
 
   // -- Workspace actions --
-  createWorkspace: (name?: string) => void;
+  createWorkspace: (name?: string, opts?: { layoutMode?: SurfaceLayoutMode }) => void;
   renameWorkspace: (id: WorkspaceId, name: string) => void;
   setWorkspaceIcon: (id: WorkspaceId, icon: string) => void;
   closeWorkspace: (id: WorkspaceId) => void;
@@ -347,7 +596,7 @@ export interface WorkspaceState {
   clearWorkspaceUnread: (id: WorkspaceId) => void;
 
   // -- Surface actions --
-  createSurface: (workspaceId?: WorkspaceId) => void;
+  createSurface: (workspaceId?: WorkspaceId, opts?: { layoutMode?: SurfaceLayoutMode }) => void;
   renameSurface: (surfaceId: SurfaceId, name: string) => void;
   setSurfaceIcon: (surfaceId: SurfaceId, icon: string) => void;
   closeSurface: (surfaceId: SurfaceId) => void;
@@ -356,11 +605,17 @@ export interface WorkspaceState {
   setActiveSurface: (surfaceId: SurfaceId) => void;
 
   // -- Pane actions --
-  splitActive: (direction: SplitDirection, newPaneName?: string) => void;
-  closePane: (paneId: PaneId) => void;
+  splitActive: (
+    direction: SplitDirection,
+    newPaneName?: string,
+    opts?: { sessionId?: string | null; paneIcon?: string },
+  ) => void;
+  closePane: (paneId: PaneId, opts?: { stopSession?: boolean; captureTranscript?: boolean }) => void;
   setActivePaneId: (paneId: PaneId) => void;
+  clearActivePaneFocus: (surfaceId?: SurfaceId) => void;
   setPaneSessionId: (paneId: PaneId, sessionId: string) => void;
   setPaneName: (paneId: PaneId, name: string) => void;
+  setPaneIcon: (paneId: PaneId, icon: string) => void;
   paneName: (paneId: PaneId) => string | null;
   focusDirection: (direction: Direction) => void;
   toggleZoom: () => void;
@@ -392,6 +647,27 @@ export interface WorkspaceState {
   toggleWebBrowserFullscreen: () => void;
   setWebBrowserFullscreen: (fullscreen: boolean) => void;
   updateNodeRatio: (paneId: PaneId, newRatio: number) => void;
+  createCanvasPanel: (
+    surfaceId?: SurfaceId,
+    opts?: {
+      paneName?: string;
+      paneIcon?: string;
+      sessionId?: string | null;
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+    },
+  ) => PaneId | null;
+  moveCanvasPanel: (paneId: PaneId, x: number, y: number) => void;
+  resizeCanvasPanel: (paneId: PaneId, width: number, height: number) => void;
+  arrangeCanvasPanels: (surfaceId?: SurfaceId) => void;
+  setCanvasView: (surfaceId: SurfaceId, view: Partial<CanvasViewSnapshot>) => void;
+  setCanvasPreviousView: (surfaceId: SurfaceId, snapshot: CanvasViewSnapshot | null) => void;
+  focusCanvasPanel: (paneId: PaneId, opts?: { storePreviousView?: boolean }) => void;
+  clearCanvasPanelStatus: (paneId: PaneId) => void;
+  setCanvasPanelStatus: (paneId: PaneId, status: CanvasPanelStatus) => void;
+  setCanvasPanelIcon: (paneId: PaneId, icon: string) => void;
   hydrateSession: (session: PersistedSession) => void;
 
   // -- Helpers (derived) --
@@ -509,8 +785,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     // ===== Workspace actions =====
 
-    createWorkspace: (name?: string) => {
-      const ws = createDefaultWorkspace(name);
+    createWorkspace: (name?: string, opts?: { layoutMode?: SurfaceLayoutMode }) => {
+      const safeName = typeof name === "string" ? name.trim() : "";
+      const layoutMode = opts?.layoutMode ?? "bsp";
+      const ws = createDefaultWorkspace(safeName || undefined, layoutMode);
       set((s) => {
         const workspaceBrowserState = {
           ...s.workspaceBrowserState,
@@ -525,17 +803,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     renameWorkspace: (id, name) => {
+      const nextName = typeof name === "string" ? name.trim() : "";
+      if (!nextName) return;
       set((s) => ({
         workspaces: s.workspaces.map((ws) =>
-          ws.id === id ? { ...ws, name } : ws
+          ws.id === id ? { ...ws, name: nextName } : ws
         ),
       }));
     },
 
     setWorkspaceIcon: (id, icon) => {
+      const nextIcon = normalizeIconId(icon);
       set((s) => ({
         workspaces: s.workspaces.map((ws) =>
-          ws.id === id ? { ...ws, icon: icon.trim() || ws.icon } : ws,
+          ws.id === id ? { ...ws, icon: nextIcon } : ws,
         ),
       }));
     },
@@ -671,10 +952,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     // ===== Surface actions =====
 
-    createSurface: (workspaceId?: WorkspaceId) => {
+    createSurface: (workspaceId?: WorkspaceId, opts?: { layoutMode?: SurfaceLayoutMode }) => {
       const wsId = workspaceId ?? get().activeWorkspaceId;
       if (!wsId) return;
-      const sf = createDefaultSurface(wsId);
+      const layoutMode = opts?.layoutMode ?? "bsp";
+      const sf = createDefaultSurface(wsId, layoutMode);
       set((s) => ({
         workspaces: s.workspaces.map((ws) =>
           ws.id === wsId
@@ -689,11 +971,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     renameSurface: (surfaceId, name) => {
-      updateSurface(surfaceId, (sf) => ({ ...sf, name }));
+      const nextName = typeof name === "string" ? name.trim() : "";
+      if (!nextName) return;
+      updateSurface(surfaceId, (sf) => ({ ...sf, name: nextName }));
     },
 
     setSurfaceIcon: (surfaceId, icon) => {
-      updateSurface(surfaceId, (sf) => ({ ...sf, icon: icon.trim() || sf.icon }));
+      const nextIcon = normalizeIconId(icon);
+      updateSurface(surfaceId, (sf) => ({ ...sf, icon: nextIcon }));
     },
 
     closeSurface: (surfaceId) => {
@@ -775,6 +1060,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       if (!pair) return;
       set((s) => ({
         activeWorkspaceId: pair.ws.id,
+        zoomedPaneId: null,
         ...activateWorkspaceBrowserState(s.workspaceBrowserState, pair.ws.id),
         workspaces: s.workspaces.map((w) =>
           w.id === pair.ws.id ? { ...w, activeSurfaceId: surfaceId } : w
@@ -784,30 +1070,101 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
 
     // ===== Pane actions =====
 
-    splitActive: (direction: SplitDirection, newPaneName?: string) => {
+    splitActive: (direction: SplitDirection, newPaneName?: string, opts?: { sessionId?: string | null; paneIcon?: string }) => {
       const sf = getActiveSurface();
       if (!sf) return;
+      if (sf.layoutMode === "canvas") {
+        get().createCanvasPanel(sf.id, {
+          paneName: newPaneName,
+          paneIcon: opts?.paneIcon,
+          sessionId: opts?.sessionId ?? null,
+        });
+        return;
+      }
       const target = sf.activePaneId ?? allLeafIds(sf.layout)[0];
       if (!target) return;
       const result = splitPane(sf.layout, target, direction);
+      const layout = typeof opts?.sessionId === "string" && opts.sessionId
+        ? setSessionId(result.tree, result.newPaneId, opts.sessionId)
+        : result.tree;
       const trimmedName = (newPaneName ?? "").trim();
       updateSurface(sf.id, (s) => ({
         ...s,
-        layout: result.tree,
-        paneNames: buildPaneNames(allLeafIds(result.tree), {
+        layout,
+        paneNames: buildPaneNames(allLeafIds(layout), {
           ...s.paneNames,
-          [result.newPaneId]: trimmedName || s.paneNames[result.newPaneId] || `Pane ${allLeafIds(result.tree).length}`,
+          [result.newPaneId]: trimmedName || s.paneNames[result.newPaneId] || `Pane ${allLeafIds(layout).length}`,
+        }),
+        paneIcons: buildPaneIcons(allLeafIds(layout), {
+          ...s.paneIcons,
+          [result.newPaneId]: normalizeIconId(opts?.paneIcon ?? s.paneIcons[result.newPaneId] ?? "terminal"),
         }),
         activePaneId: result.newPaneId,
       }));
       set({ zoomedPaneId: null });
     },
 
-    closePane: (paneId) => {
+    closePane: (paneId, opts) => {
+      let shouldStopSession = opts?.stopSession !== false;
+      const shouldCaptureTranscript = opts?.captureTranscript !== false;
+      if (shouldStopSession) {
+        const { workspaces } = get();
+        const sessionId = resolvePaneSessionId(workspaces, paneId);
+        if (sessionId && hasAnotherPaneForSession(workspaces, sessionId, paneId)) {
+          shouldStopSession = false;
+        }
+      }
       const sf = getActiveSurface();
       if (!sf) return;
+      if (sf.layoutMode === "canvas") {
+        const pair = findWsSurfaceAndPane(paneId);
+        if (pair && shouldCaptureTranscript) {
+          captureTranscriptForPane({
+            paneId,
+            workspaceId: pair.ws.id,
+            surfaceId: pair.sf.id,
+            cwd: pair.ws.cwd,
+            reason: "pane-close",
+          });
+        }
+
+        const newTree = removePane(sf.layout, paneId);
+        if (newTree === null) {
+          const leaf = createLeaf();
+        updateSurface(sf.id, (s) => normalizeCanvasPanels({
+          ...s,
+          layout: leaf,
+          paneNames: { [leaf.id]: "Pane 1" },
+          paneIcons: { [leaf.id]: "terminal" },
+          activePaneId: leaf.id,
+          canvasPanels: [
+            buildCanvasPanel({
+              paneId: leaf.id,
+              paneName: "Pane 1",
+              index: 0,
+              persisted: { icon: "terminal" },
+              status: "idle",
+            }),
+          ],
+        }));
+          stopPaneSessions([paneId], shouldStopSession);
+          return;
+        }
+
+        const remaining = allLeafIds(newTree);
+      updateSurface(sf.id, (s) => normalizeCanvasPanels({
+        ...s,
+        layout: newTree,
+        paneNames: buildPaneNames(remaining, s.paneNames),
+        paneIcons: buildPaneIcons(remaining, s.paneIcons),
+        activePaneId: s.activePaneId === paneId ? remaining[0] ?? null : s.activePaneId,
+        canvasPanels: s.canvasPanels.filter((panel) => panel.paneId !== paneId),
+      }));
+        stopPaneSessions([paneId], shouldStopSession);
+        return;
+      }
       const pair = findWsSurfaceAndPane(paneId);
-      if (pair) {
+      if (pair && shouldCaptureTranscript) {
         captureTranscriptForPane({
           paneId,
           workspaceId: pair.ws.id,
@@ -823,9 +1180,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           ...s,
           layout: leaf,
           paneNames: { [leaf.id]: "Pane 1" },
+          paneIcons: { [leaf.id]: "terminal" },
           activePaneId: leaf.id,
         }));
-        stopPaneSessions([paneId]);
+        stopPaneSessions([paneId], shouldStopSession);
         return;
       }
       const remaining = allLeafIds(newTree);
@@ -833,6 +1191,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ...s,
         layout: newTree,
         paneNames: buildPaneNames(remaining, s.paneNames),
+        paneIcons: buildPaneIcons(remaining, s.paneIcons),
         activePaneId:
           s.activePaneId === paneId
             ? remaining[0] ?? null
@@ -840,7 +1199,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }));
       const { zoomedPaneId } = get();
       if (zoomedPaneId === paneId) set({ zoomedPaneId: null });
-      stopPaneSessions([paneId]);
+      stopPaneSessions([paneId], shouldStopSession);
     },
 
     setActivePaneId: (paneId) => {
@@ -867,9 +1226,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }));
     },
 
+    clearActivePaneFocus: (surfaceId) => {
+      const targetSurface = surfaceId
+        ? findWsAndSurface(surfaceId)?.sf
+        : getActiveSurface();
+      if (!targetSurface) return;
+
+      updateSurface(targetSurface.id, (surface) => ({
+        ...surface,
+        activePaneId: null,
+      }));
+    },
+
     setPaneSessionId: (paneId, sessionId) => {
       const pair = findWsSurfaceAndPane(paneId);
       if (!pair) return;
+      if (pair.sf.layoutMode === "canvas") {
+        updateSurface(pair.sf.id, (s) => normalizeCanvasPanels({
+          ...s,
+          layout: setSessionId(s.layout, paneId, sessionId),
+          canvasPanels: s.canvasPanels.map((panel) =>
+            panel.paneId === paneId
+              ? { ...panel, sessionId, status: "running", lastActivityAt: Date.now() }
+              : panel
+          ),
+        }));
+        return;
+      }
       updateSurface(pair.sf.id, (s) => ({
         ...s,
         layout: setSessionId(s.layout, paneId, sessionId),
@@ -879,8 +1262,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     setPaneName: (paneId, name) => {
       const pair = findWsSurfaceAndPane(paneId);
       if (!pair) return;
-      const nextName = name.trim();
+      const nextName = typeof name === "string" ? name.trim() : "";
       if (!nextName) return;
+      if (pair.sf.layoutMode === "canvas") {
+        updateSurface(pair.sf.id, (s) => normalizeCanvasPanels({
+          ...s,
+          paneNames: {
+            ...s.paneNames,
+            [paneId]: nextName,
+          },
+          canvasPanels: s.canvasPanels.map((panel) =>
+            panel.paneId === paneId
+              ? { ...panel, title: nextName }
+              : panel
+          ),
+        }));
+        return;
+      }
       updateSurface(pair.sf.id, (s) => ({
         ...s,
         paneNames: {
@@ -890,9 +1288,73 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       }));
     },
 
+    setPaneIcon: (paneId, icon) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair) return;
+      const nextIcon = normalizeIconId(icon);
+
+      if (pair.sf.layoutMode === "canvas") {
+        updateSurface(pair.sf.id, (s) => normalizeCanvasPanels({
+          ...s,
+          paneIcons: {
+            ...s.paneIcons,
+            [paneId]: nextIcon,
+          },
+          canvasPanels: s.canvasPanels.map((panel) =>
+            panel.paneId === paneId ? { ...panel, icon: nextIcon } : panel
+          ),
+        }));
+        return;
+      }
+
+      updateSurface(pair.sf.id, (s) => ({
+        ...s,
+        paneIcons: {
+          ...s.paneIcons,
+          [paneId]: nextIcon,
+        },
+      }));
+    },
+
     focusDirection: (direction: Direction) => {
       const sf = getActiveSurface();
       if (!sf || !sf.activePaneId) return;
+      if (sf.layoutMode === "canvas") {
+        const activePanel = sf.canvasPanels.find((panel) => panel.paneId === sf.activePaneId);
+        if (!activePanel) return;
+        const activeCenterX = activePanel.x + activePanel.width / 2;
+        const activeCenterY = activePanel.y + activePanel.height / 2;
+
+        const candidate = sf.canvasPanels
+          .filter((panel) => panel.paneId !== sf.activePaneId)
+          .map((panel) => {
+            const centerX = panel.x + panel.width / 2;
+            const centerY = panel.y + panel.height / 2;
+            const dx = centerX - activeCenterX;
+            const dy = centerY - activeCenterY;
+            const isEligible = direction === "left"
+              ? dx < 0
+              : direction === "right"
+                ? dx > 0
+                : direction === "up"
+                  ? dy < 0
+                  : dy > 0;
+            if (!isEligible) return null;
+            const primary = direction === "left" || direction === "right" ? Math.abs(dx) : Math.abs(dy);
+            const secondary = direction === "left" || direction === "right" ? Math.abs(dy) : Math.abs(dx);
+            return {
+              paneId: panel.paneId,
+              score: primary * 10 + secondary,
+            };
+          })
+          .filter((entry): entry is { paneId: string; score: number } => Boolean(entry))
+          .sort((a, b) => a.score - b.score)[0];
+
+        if (candidate) {
+          updateSurface(sf.id, (s) => ({ ...s, activePaneId: candidate.paneId }));
+        }
+        return;
+      }
       const next = findAdjacentPane(sf.layout, sf.activePaneId, direction);
       if (next) {
         updateSurface(sf.id, (s) => ({ ...s, activePaneId: next }));
@@ -902,6 +1364,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     toggleZoom: () => {
       const sf = getActiveSurface();
       if (!sf) return;
+      if (sf.layoutMode === "canvas") {
+        return;
+      }
       const { zoomedPaneId } = get();
       if (zoomedPaneId) {
         set({ zoomedPaneId: null });
@@ -913,6 +1378,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     applyPresetLayout: (preset: PresetLayout) => {
       const sf = getActiveSurface();
       if (!sf) return;
+      if (sf.layoutMode === "canvas") return;
 
       const existingPanes = collectPaneSnapshots(sf.layout, sf.activePaneId);
       const layout = applyPaneSnapshots(buildPresetLayout(preset), existingPanes);
@@ -922,6 +1388,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ...s,
         layout,
         paneNames: buildPaneNames(panes, s.paneNames),
+        paneIcons: buildPaneIcons(panes, s.paneIcons),
         activePaneId: s.activePaneId && panes.includes(s.activePaneId)
           ? s.activePaneId
           : panes[0] ?? null,
@@ -938,6 +1405,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     equalizeLayout: () => {
       const sf = getActiveSurface();
       if (!sf) return;
+      if (sf.layoutMode === "canvas") return;
       updateSurface(sf.id, (s) => ({
         ...s,
         layout: equalizeLayoutRatios(s.layout),
@@ -1126,9 +1594,244 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     updateNodeRatio: (paneId, newRatio) => {
       const sf = getActiveSurface();
       if (!sf) return;
+      if (sf.layoutMode === "canvas") return;
       updateSurface(sf.id, (s) => ({
         ...s,
         layout: updateRatio(s.layout, paneId, newRatio),
+      }));
+    },
+
+    createCanvasPanel: (surfaceId, opts) => {
+      const surface = surfaceId
+        ? findWsAndSurface(surfaceId)?.sf
+        : getActiveSurface();
+      if (!surface || surface.layoutMode !== "canvas") return null;
+      const targetPaneId = surface.activePaneId ?? allLeafIds(surface.layout)[0];
+      if (!targetPaneId) return null;
+      const split = splitPane(surface.layout, targetPaneId, "horizontal");
+      const nextLayout = typeof opts?.sessionId === "string" && opts.sessionId
+        ? setSessionId(split.tree, split.newPaneId, opts.sessionId)
+        : split.tree;
+      const placement = findCanvasPlacement(surface, targetPaneId);
+      const requestedName = typeof opts?.paneName === "string" ? opts.paneName.trim() : "";
+      const nextIcon = normalizeIconId(opts?.paneIcon ?? "terminal");
+      const persistedSessionId = typeof opts?.sessionId === "string" && opts.sessionId
+        ? opts.sessionId
+        : undefined;
+
+      updateSurface(surface.id, (s) => {
+        const paneIds = allLeafIds(nextLayout);
+        const paneNames = buildPaneNames(paneIds, {
+          ...s.paneNames,
+          [split.newPaneId]: requestedName || `Pane ${paneIds.length}`,
+        });
+        const paneIcons = buildPaneIcons(paneIds, {
+          ...s.paneIcons,
+          [split.newPaneId]: nextIcon,
+        });
+        const nextPanels = [
+          ...s.canvasPanels,
+          buildCanvasPanel({
+            paneId: split.newPaneId,
+            paneName: paneNames[split.newPaneId],
+            index: s.canvasPanels.length,
+            persisted: {
+              x: Number.isFinite(opts?.x) ? Number(opts?.x) : placement.x,
+              y: Number.isFinite(opts?.y) ? Number(opts?.y) : placement.y,
+              width: Number.isFinite(opts?.width) ? Number(opts?.width) : DEFAULT_CANVAS_PANEL_WIDTH,
+              height: Number.isFinite(opts?.height) ? Number(opts?.height) : DEFAULT_CANVAS_PANEL_HEIGHT,
+              icon: paneIcons[split.newPaneId],
+              ...(persistedSessionId ? { sessionId: persistedSessionId } : {}),
+            },
+            status: persistedSessionId ? "running" : "idle",
+          }),
+        ];
+
+        return normalizeCanvasPanels({
+          ...s,
+          layout: nextLayout,
+          paneNames,
+          paneIcons,
+          activePaneId: split.newPaneId,
+          canvasPanels: nextPanels,
+        });
+      });
+
+      return split.newPaneId;
+    },
+
+    moveCanvasPanel: (paneId, x, y) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      updateSurface(pair.sf.id, (s) => normalizeCanvasPanels({
+        ...s,
+        canvasPanels: s.canvasPanels.map((panel) =>
+          panel.paneId === paneId
+            ? { ...panel, x, y, lastActivityAt: Date.now() }
+            : panel
+        ),
+      }));
+    },
+
+    resizeCanvasPanel: (paneId, width, height) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      updateSurface(pair.sf.id, (s) => normalizeCanvasPanels({
+        ...s,
+        canvasPanels: s.canvasPanels.map((panel) =>
+          panel.paneId === paneId
+            ? {
+              ...panel,
+              width: Math.max(320, width),
+              height: Math.max(220, height),
+              lastActivityAt: Date.now(),
+            }
+            : panel
+        ),
+      }));
+    },
+
+    arrangeCanvasPanels: (surfaceId) => {
+      const surface = surfaceId
+        ? findWsAndSurface(surfaceId)?.sf
+        : getActiveSurface();
+      if (!surface || surface.layoutMode !== "canvas" || surface.canvasPanels.length === 0) {
+        return;
+      }
+
+      const panels = surface.canvasPanels;
+      const maxWidth = Math.max(...panels.map((panel) => Math.max(320, panel.width)));
+      const maxHeight = Math.max(...panels.map((panel) => Math.max(220, panel.height)));
+      const columnCount = Math.max(1, Math.min(5, Math.round(Math.sqrt(panels.length * 1.4))));
+      const stepX = maxWidth + CANVAS_AUTO_GAP_X;
+      const stepY = maxHeight + CANVAS_AUTO_GAP_Y;
+      const ordered = [
+        ...panels.filter((panel) => panel.paneId === surface.activePaneId),
+        ...panels.filter((panel) => panel.paneId !== surface.activePaneId),
+      ];
+      const positions = new Map<string, { x: number; y: number }>();
+
+      ordered.forEach((panel, index) => {
+        const row = Math.floor(index / columnCount);
+        const col = index % columnCount;
+        positions.set(panel.paneId, {
+          x: snapCanvasCoord(80 + col * stepX),
+          y: snapCanvasCoord(60 + row * stepY),
+        });
+      });
+
+      updateSurface(surface.id, (s) => normalizeCanvasPanels({
+        ...s,
+        canvasPanels: s.canvasPanels.map((panel) => {
+          const position = positions.get(panel.paneId);
+          if (!position) {
+            return panel;
+          }
+          return {
+            ...panel,
+            x: position.x,
+            y: position.y,
+            lastActivityAt: Date.now(),
+          };
+        }),
+      }));
+    },
+
+    setCanvasView: (surfaceId, view) => {
+      updateSurface(surfaceId, (surface) => {
+        if (surface.layoutMode !== "canvas") return surface;
+        return normalizeCanvasPanels({
+          ...surface,
+          canvasState: sanitizeCanvasState({
+            ...surface.canvasState,
+            ...view,
+          }),
+        });
+      });
+    },
+
+    setCanvasPreviousView: (surfaceId, snapshot) => {
+      updateSurface(surfaceId, (surface) => {
+        if (surface.layoutMode !== "canvas") return surface;
+        const normalizedSnapshot = snapshot
+          ? {
+            panX: Number.isFinite(snapshot.panX) ? snapshot.panX : 0,
+            panY: Number.isFinite(snapshot.panY) ? snapshot.panY : 0,
+            zoomLevel: Math.max(CANVAS_MIN_ZOOM, Math.min(CANVAS_MAX_ZOOM, snapshot.zoomLevel)),
+          }
+          : null;
+        return {
+          ...surface,
+          canvasState: {
+            ...surface.canvasState,
+            previousView: normalizedSnapshot,
+          },
+        };
+      });
+    },
+
+    focusCanvasPanel: (paneId, opts) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      const nextNonce = (pair.sf.canvasState.focusRequestNonce ?? 0) + 1;
+      const previous = opts?.storePreviousView !== false
+        ? {
+          panX: pair.sf.canvasState.panX,
+          panY: pair.sf.canvasState.panY,
+          zoomLevel: pair.sf.canvasState.zoomLevel,
+        }
+        : pair.sf.canvasState.previousView;
+
+      updateSurface(pair.sf.id, (surface) => normalizeCanvasPanels({
+        ...surface,
+        activePaneId: paneId,
+        canvasState: sanitizeCanvasState({
+          ...surface.canvasState,
+          previousView: previous,
+          focusRequestNonce: nextNonce,
+        }),
+      }));
+    },
+
+    clearCanvasPanelStatus: (paneId) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      updateSurface(pair.sf.id, (surface) => normalizeCanvasPanels({
+        ...surface,
+        canvasPanels: surface.canvasPanels.map((panel) =>
+          panel.paneId === paneId
+            ? { ...panel, status: "running", lastActivityAt: Date.now() }
+            : panel
+        ),
+      }));
+    },
+
+    setCanvasPanelStatus: (paneId, status) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      updateSurface(pair.sf.id, (surface) => normalizeCanvasPanels({
+        ...surface,
+        canvasPanels: surface.canvasPanels.map((panel) =>
+          panel.paneId === paneId
+            ? { ...panel, status, lastActivityAt: Date.now() }
+            : panel
+        ),
+      }));
+    },
+
+    setCanvasPanelIcon: (paneId, icon) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      const nextIcon = normalizeIconId(icon);
+      updateSurface(pair.sf.id, (surface) => normalizeCanvasPanels({
+        ...surface,
+        paneIcons: {
+          ...surface.paneIcons,
+          [paneId]: nextIcon,
+        },
+        canvasPanels: surface.canvasPanels.map((panel) =>
+          panel.paneId === paneId ? { ...panel, icon: nextIcon } : panel
+        ),
       }));
     },
 
@@ -1152,11 +1855,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const sessionSurfaces = Array.isArray(workspace.surfaces) ? workspace.surfaces : [];
         const surfaces = sessionSurfaces.length > 0
           ? sessionSurfaces.map((surface, surfaceIndex) => {
+            const layoutMode: SurfaceLayoutMode = surface.layoutMode === "canvas" ? "canvas" : "bsp";
             const fallbackPaneIds = [
               ...(typeof surface.activePaneId === "string" ? [surface.activePaneId] : []),
               ...(Array.isArray(surface.panes)
                 ? surface.panes
                   .map((pane) => pane?.id)
+                  .filter((paneId): paneId is string => typeof paneId === "string" && paneId.length > 0)
+                : []),
+              ...(Array.isArray(surface.canvasPanels)
+                ? surface.canvasPanels
+                  .map((panel) => panel?.paneId)
                   .filter((paneId): paneId is string => typeof paneId === "string" && paneId.length > 0)
                 : []),
             ];
@@ -1165,24 +1874,54 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             const activePaneId = typeof surface.activePaneId === "string" && paneIds.includes(surface.activePaneId)
               ? surface.activePaneId
               : paneIds[0] ?? null;
+            const paneNames = buildPaneNames(
+              paneIds,
+              typeof surface.paneNames === "object" && surface.paneNames
+                ? surface.paneNames as Record<PaneId, string>
+                : undefined,
+            );
+            const paneIcons = buildPaneIcons(
+              paneIds,
+              typeof surface.paneIcons === "object" && surface.paneIcons
+                ? surface.paneIcons as Record<PaneId, string>
+                : undefined,
+            );
+            const canvasState = sanitizeCanvasState(surface.canvasState);
+            const persistedPanelByPane = new Map(
+              Array.isArray(surface.canvasPanels)
+                ? surface.canvasPanels
+                  .filter((panel): panel is PersistedCanvasPanel => Boolean(panel?.paneId))
+                  .map((panel) => [panel.paneId, panel])
+                : []
+            );
+            const canvasPanels = layoutMode === "canvas"
+              ? paneIds.map((paneId, index) => buildCanvasPanel({
+                paneId,
+                paneName: paneNames[paneId],
+                index,
+                persisted: persistedPanelByPane.get(paneId),
+                status: persistedPanelByPane.get(paneId)?.status,
+              }))
+              : [];
 
-            return {
+            const hydratedSurface: Surface = {
               id: typeof surface.id === "string" && surface.id ? surface.id : newSurfaceId(),
               workspaceId,
               name: typeof surface.name === "string" && surface.name
                 ? surface.name
                 : `Surface ${surfaceIndex + 1}`,
-              icon: typeof surface.icon === "string" && surface.icon ? surface.icon : "term",
+              icon: normalizeIconId(surface.icon),
+              layoutMode,
               layout,
-              paneNames: buildPaneNames(
-                paneIds,
-                typeof surface.paneNames === "object" && surface.paneNames
-                  ? surface.paneNames as Record<PaneId, string>
-                  : undefined,
-              ),
+              paneNames,
+              paneIcons,
               activePaneId,
+              canvasState,
+              canvasPanels,
               createdAt: Date.now(),
             };
+
+            return normalizeCanvasPanels(hydratedSurface);
           })
           : [createDefaultSurface(workspaceId)];
 
@@ -1196,7 +1935,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           name: typeof workspace.name === "string" && workspace.name
             ? workspace.name
             : `Workspace ${workspaceIndex + 1}`,
-          icon: typeof workspace.icon === "string" && workspace.icon ? workspace.icon : "terminal",
+          icon: normalizeIconId(workspace.icon),
           accentColor: typeof workspace.accentColor === "string" && workspace.accentColor
             ? workspace.accentColor
             : pickAccent(workspaceIndex),

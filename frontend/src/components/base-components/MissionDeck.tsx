@@ -21,6 +21,17 @@ export const MissionDeck: React.FC<MissionDeckProps> = ({
     missionCommand = "view.toggleMission",
     vaultCommand = "view.toggleSessionVault",
 }) => {
+    const asText = (value: unknown, fallback: string): string => {
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            return trimmed.length > 0 ? trimmed : fallback;
+        }
+        if (typeof value === "number") {
+            return String(value);
+        }
+        return fallback;
+    };
+
     const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace());
     const activeSurface = useWorkspaceStore((s) => s.activeSurface());
     const activeProvider = useAgentStore((s) => s.agentSettings.activeProvider);
@@ -35,6 +46,18 @@ export const MissionDeck: React.FC<MissionDeckProps> = ({
         () => approvals.filter((entry) => entry.status === "pending").length,
         [approvals],
     );
+    const workspaceName = asText(activeWorkspace?.name, "No workspace");
+    const surfaceName = asText(activeSurface?.name, "No surface");
+    const missionTag = asText(missionTagLabel, "Mission");
+    const missionButton = asText(missionButtonLabel, "Mission");
+    const vaultButton = asText(vaultButtonLabel, "Vault");
+    const providerPrefix = asText(providerLabelPrefix, "provider");
+    const providerText = asText(activeProvider, "unknown");
+    const approvalsText = asText(approvalsLabel, "approvals");
+    const traceText = asText(traceLabel, "trace");
+    const opsText = asText(opsLabel, "ops");
+    const recallText = asText(recallLabel, "recall");
+    const snapshotsText = asText(snapshotsLabel, "snapshots");
 
     return (
         <div
@@ -60,7 +83,7 @@ export const MissionDeck: React.FC<MissionDeckProps> = ({
                 }}
             >
                 <span className="amux-agent-indicator" style={{ fontSize: 10, padding: "2px 8px" }}>
-                    {missionTagLabel}
+                    {missionTag}
                 </span>
                 <span
                     style={{
@@ -71,33 +94,33 @@ export const MissionDeck: React.FC<MissionDeckProps> = ({
                         textOverflow: "ellipsis",
                         maxWidth: 240,
                     }}
-                    title={`${activeWorkspace?.name ?? "No workspace"} - ${activeSurface?.name ?? "No surface"}`}
+                    title={`${workspaceName} - ${surfaceName}`}
                 >
-                    {activeWorkspace?.name ?? "No workspace"}
+                    {workspaceName}
                 </span>
                 <span style={{ color: "var(--text-muted)", fontSize: "var(--text-xs)", whiteSpace: "nowrap" }}>
-                    {activeSurface?.name ?? "No surface"}
+                    {surfaceName}
                 </span>
                 <span className="amux-chip" style={{ fontSize: 10, padding: "2px 6px" }}>
-                    {providerLabelPrefix} {activeProvider}
+                    {providerPrefix} {providerText}
                 </span>
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", whiteSpace: "nowrap" }}>
                 <span className="amux-chip amux-chip--approval" style={{ fontSize: 10, padding: "2px 6px" }}>
-                    {approvalsLabel} {approvalCount}
+                    {approvalsText} {approvalCount}
                 </span>
                 <span className="amux-chip" style={{ fontSize: 10, padding: "2px 6px", color: "var(--reasoning)" }}>
-                    {traceLabel} {cognitiveEvents.length}
+                    {traceText} {cognitiveEvents.length}
                 </span>
                 <span className="amux-chip" style={{ fontSize: 10, padding: "2px 6px", color: "var(--agent)" }}>
-                    {opsLabel} {operationalEvents.length}
+                    {opsText} {operationalEvents.length}
                 </span>
                 <span className="amux-chip" style={{ fontSize: 10, padding: "2px 6px", color: "var(--timeline)" }}>
-                    {recallLabel} {historyHits.length + symbolHits.length}
+                    {recallText} {historyHits.length + symbolHits.length}
                 </span>
                 <span className="amux-chip" style={{ fontSize: 10, padding: "2px 6px" }}>
-                    {snapshotsLabel} {snapshots.length}
+                    {snapshotsText} {snapshots.length}
                 </span>
             </div>
 
@@ -117,7 +140,7 @@ export const MissionDeck: React.FC<MissionDeckProps> = ({
                         cursor: "pointer",
                     }}
                 >
-                    {missionButtonLabel}
+                    {missionButton}
                 </button>
                 <button
                     type="button"
@@ -134,7 +157,7 @@ export const MissionDeck: React.FC<MissionDeckProps> = ({
                         cursor: "pointer",
                     }}
                 >
-                    {vaultButtonLabel}
+                    {vaultButton}
                 </button>
             </div>
             {children}

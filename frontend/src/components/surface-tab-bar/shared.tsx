@@ -1,7 +1,8 @@
 import type { CSSProperties } from "react";
 import type { useWorkspaceStore } from "../../lib/workspaceStore";
+import { SURFACE_ICON_IDS } from "../../lib/iconRegistry";
 
-export const SURFACE_ICONS = ["term", "code", "api", "ops", "db", "ssh", "web"];
+export const SURFACE_ICONS = SURFACE_ICON_IDS;
 
 export type SurfaceRecord = ReturnType<typeof useWorkspaceStore.getState>["workspaces"][number]["surfaces"][number];
 

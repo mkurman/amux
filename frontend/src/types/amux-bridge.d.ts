@@ -68,6 +68,13 @@ declare global {
         openDataPath?: (relativePath: string) => Promise<string>;
         revealDataPath?: (relativePath: string) => Promise<boolean>;
         sendTerminalInput?: (paneId: string | null, data: string) => Promise<boolean>;
+        cloneTerminalSession?: (payload: {
+            sourcePaneId?: string;
+            sourceSessionId?: string | null;
+            workspaceId?: string | null;
+            cols?: number;
+            rows?: number;
+        }) => Promise<{ sessionId: string }>;
         listInstalledPlugins?: () => Promise<AmuxInstalledPluginRecord[]>;
         loadInstalledPlugins?: () => Promise<AmuxInstalledPluginLoadResult[]>;
     };

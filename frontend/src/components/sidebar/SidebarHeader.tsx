@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 export function SidebarHeader({
     workspacesCount,
     approvalsCount,
@@ -9,10 +11,24 @@ export function SidebarHeader({
     workspacesCount: number;
     approvalsCount: number;
     reasoningCount: number;
-    createWorkspace: () => void;
+    createWorkspace: (layoutMode?: "bsp" | "canvas") => void;
     query: string;
     setQuery: (value: string) => void;
 }) {
+    const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        const onPointerDown = (event: MouseEvent) => {
+            if (!menuRef.current?.contains(event.target as Node)) {
+                setMenuOpen(false);
+            }
+        };
+        window.addEventListener("mousedown", onPointerDown);
+        return () => window.removeEventListener("mousedown", onPointerDown);
+    }, [menuOpen]);
+
     return (
         <>
             <div
@@ -33,21 +49,63 @@ export function SidebarHeader({
                         </div>
                     </div>
 
-                    <button
-                        onClick={createWorkspace}
-                        style={createButtonStyle}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.background = "rgba(94, 231, 223, 0.2)";
-                            e.currentTarget.style.borderColor = "var(--accent)";
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.background = "var(--accent-soft)";
-                            e.currentTarget.style.borderColor = "var(--accent-soft)";
-                        }}
-                        title="New workspace"
-                    >
-                        +
-                    </button>
+                    <div ref={menuRef} style={{ position: "relative" }}>
+                        <button
+                            onClick={() => setMenuOpen((current) => !current)}
+                            style={createButtonStyle}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "rgba(94, 231, 223, 0.2)";
+                                e.currentTarget.style.borderColor = "var(--accent)";
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "var(--accent-soft)";
+                                e.currentTarget.style.borderColor = "var(--accent-soft)";
+                            }}
+                            title="New workspace"
+                        >
+                            +
+                        </button>
+
+                        {menuOpen ? (
+                            <div
+                                style={{
+                                    position: "absolute",
+                                    top: "calc(100% + 6px)",
+                                    right: 0,
+                                    minWidth: 190,
+                                    border: "1px solid var(--glass-border)",
+                                    borderRadius: "var(--radius-md)",
+                                    background: "var(--bg-primary)",
+                                    boxShadow: "var(--shadow-sm)",
+                                    padding: 4,
+                                    display: "grid",
+                                    gap: 2,
+                                    zIndex: 2000,
+                                }}
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        createWorkspace("bsp");
+                                        setMenuOpen(false);
+                                    }}
+                                    style={menuItemStyle}
+                                >
+                                    New Workspace (BSP)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        createWorkspace("canvas");
+                                        setMenuOpen(false);
+                                    }}
+                                    style={menuItemStyle}
+                                >
+                                    New Workspace (Infinite Canvas)
+                                </button>
+                            </div>
+                        ) : null}
+                    </div>
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "var(--space-2)" }}>
@@ -110,4 +168,15 @@ const searchInputStyle: React.CSSProperties = {
     padding: "var(--space-2) var(--space-3)",
     fontSize: "var(--text-sm)",
     outline: "none",
+};
+
+const menuItemStyle: React.CSSProperties = {
+    border: "none",
+    background: "transparent",
+    color: "var(--text-secondary)",
+    cursor: "pointer",
+    textAlign: "left",
+    fontSize: "var(--text-xs)",
+    borderRadius: "var(--radius-sm)",
+    padding: "6px 8px",
 };

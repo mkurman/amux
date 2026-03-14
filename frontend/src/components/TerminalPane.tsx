@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "@xterm/addon-canvas";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -26,11 +27,21 @@ import { useWorkspaceStore } from "../lib/workspaceStore";
 import { useSettingsStore } from "../lib/settingsStore";
 import { useCommandLogStore } from "../lib/commandLogStore";
 import { useTranscriptStore } from "../lib/transcriptStore";
+import { useNotificationStore } from "../lib/notificationStore";
 import { assessCommandRisk, useAgentMissionStore } from "../lib/agentMissionStore";
 import { registerTerminalController, type TerminalSendOptions } from "../lib/terminalRegistry";
-import { allLeafIds } from "../lib/bspTree";
+import { allLeafIds, findLeaf } from "../lib/bspTree";
 import { getEffectiveTheme } from "../lib/themes";
 import { SharedCursor } from "./SharedCursor";
+import {
+  cloneSessionForDuplication,
+  queuePaneBootstrapCommand,
+  parseCloneSessionToken,
+  resolveDuplicateActiveBootstrapCommand,
+  resolveDuplicateBootstrapCommand,
+  resolveDuplicateSourceSessionId,
+  unwrapCloneSessionId,
+} from "../lib/paneDuplication";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -45,6 +56,39 @@ type ContextMenuState = {
   x: number;
   y: number;
 };
+
+const INLINE_APPROVAL_PROMPT_RE = [
+  /trust(?:ed)?\s+(?:this|the)\s+(?:folder|directory|workspace|project)/i,
+  /trust\s+the\s+files?\s+in\s+this\s+folder/i,
+  /\bdo\s+you\s+approve\b/i,
+];
+
+const INLINE_APPROVAL_RESPONSE_HINT_RE = [
+  /\(\s*[yY]\s*\/\s*[nN]\s*\)/,
+  /\[\s*[yY]\s*\/\s*[nN]\s*\]/,
+  /\b(?:yes|no)\b/i,
+];
+
+function detectInlineApprovalPrompt(buffer: string): string | null {
+  const normalized = stripAnsi(buffer).replace(/\r/g, "\n");
+  const lines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-8);
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    const looksLikeApproval = INLINE_APPROVAL_PROMPT_RE.some((pattern) => pattern.test(line));
+    if (!looksLikeApproval) continue;
+    const hasResponseHint = INLINE_APPROVAL_RESPONSE_HINT_RE.some((pattern) => pattern.test(line));
+    if (hasResponseHint || /[?]$/.test(line)) {
+      return line;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Renders a single xterm.js instance connected to a daemon session.
@@ -72,17 +116,23 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     inOsc: false,
     oscEscape: false,
   });
+  const repaintNudgedRef = useRef(false);
   const lastShellCommandRef = useRef<{ command: string; timestamp: number } | null>(null);
   const commandPathRef = useRef<string>("human-typed");
   const approvalCommandByIdRef = useRef<Record<string, string>>({});
+  const pendingInlineApprovalPromptRef = useRef<{ signature: string; at: number } | null>(null);
+  const inlinePromptBufferRef = useRef("");
   const setActivePaneId = useWorkspaceStore((s) => s.setActivePaneId);
-  const activePaneId = useWorkspaceStore((s) => s.activePaneId);
   const splitActive = useWorkspaceStore((s) => s.splitActive);
   const closePane = useWorkspaceStore((s) => s.closePane);
   const toggleZoom = useWorkspaceStore((s) => s.toggleZoom);
   const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
   const setPaneSessionId = useWorkspaceStore((s) => s.setPaneSessionId);
   const setPaneName = useWorkspaceStore((s) => s.setPaneName);
+  const setCanvasPanelStatus = useWorkspaceStore((s) => s.setCanvasPanelStatus);
+  const clearCanvasPanelStatus = useWorkspaceStore((s) => s.clearCanvasPanelStatus);
+  const setCanvasView = useWorkspaceStore((s) => s.setCanvasView);
+  const setCanvasPreviousView = useWorkspaceStore((s) => s.setCanvasPreviousView);
   const paneName = useWorkspaceStore(
     useCallback(
       (state) => {
@@ -137,6 +187,9 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
   const setSymbolHits = useAgentMissionStore((s) => s.setSymbolHits);
   const setSnapshots = useAgentMissionStore((s) => s.setSnapshots);
   const approvals = useAgentMissionStore((s) => s.approvals);
+  const operationalEvents = useAgentMissionStore((s) => s.operationalEvents);
+  const addNotification = useNotificationStore((s) => s.addNotification);
+  const clearPaneNotifications = useNotificationStore((s) => s.clearPaneNotifications);
   const bracketedPasteRef = useRef(settings.bracketedPaste);
   const autoCopyOnSelectRef = useRef(settings.autoCopyOnSelect);
   const pendingApprovalIdRef = useRef<string | null>(null);
@@ -147,6 +200,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     y: 0,
   });
   const [paneNameDraft, setPaneNameDraft] = useState(paneName);
+  const [hasSelection, setHasSelection] = useState(false);
   const sharedCursorMode = useAgentMissionStore((s) => s.sharedCursorMode);
   const resolvedApprovals = useMemo(
     () => approvals.filter((entry) => entry.paneId === paneId && entry.status !== "pending" && entry.handledAt === null),
@@ -339,6 +393,42 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     closePane(paneId);
   }, [closePane, paneId]);
 
+  const duplicateSplit = useCallback(async (direction: "horizontal" | "vertical") => {
+    if (!paneWorkspaceId || !paneSurfaceId) return;
+
+    const state = useWorkspaceStore.getState();
+    const workspace = state.workspaces.find((entry) => entry.id === paneWorkspaceId);
+    const surface = workspace?.surfaces.find((entry) => entry.id === paneSurfaceId);
+    if (!workspace || !surface || surface.layoutMode !== "bsp") return;
+
+    const sourceSessionId = resolveDuplicateSourceSessionId(
+      paneId,
+      findLeaf(surface.layout, paneId)?.sessionId ?? requestedSessionIdRef.current ?? null,
+      operationalEvents,
+    );
+    const targetSessionId = await cloneSessionForDuplication(paneId, sourceSessionId, {
+      workspaceId: workspace.id,
+    });
+    const sourceName = surface.paneNames[paneId] ?? paneName;
+    const sourceIcon = surface.paneIcons[paneId] ?? "terminal";
+
+    splitActive(direction, `${sourceName} Copy`, {
+      sessionId: targetSessionId ?? null,
+      paneIcon: sourceIcon,
+    });
+
+    const duplicatedPaneId = useWorkspaceStore.getState().activePaneId();
+    if (!duplicatedPaneId) return;
+    const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents);
+    const fallbackBootstrapCommand = !targetSessionId
+      ? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
+      : null;
+    const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+    if (bootstrapCommand) {
+      queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
+    }
+  }, [operationalEvents, paneId, paneName, paneSurfaceId, paneWorkspaceId, splitActive]);
+
   const sendResize = useCallback(() => {
     const term = termRef.current;
     const amux = (window as any).tamux ?? (window as any).amux;
@@ -346,10 +436,103 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     void amux.resizeTerminalSession(paneId, term.cols, term.rows);
   }, [paneId]);
 
+  const nudgeTerminalRepaint = useCallback(() => {
+    if (repaintNudgedRef.current) return;
+    const term = termRef.current;
+    const amux = (window as any).tamux ?? (window as any).amux;
+    if (!term || !amux?.resizeTerminalSession) return;
+    if (term.cols < 2 || term.rows < 2) return;
+
+    repaintNudgedRef.current = true;
+    const originalCols = term.cols;
+    const originalRows = term.rows;
+    const bumpedCols = Math.min(512, originalCols + 1);
+
+    void amux.resizeTerminalSession(paneId, bumpedCols, originalRows);
+    window.setTimeout(() => {
+      void amux.resizeTerminalSession(paneId, originalCols, originalRows);
+    }, 40);
+  }, [paneId]);
+
+  const scheduleRepaintRecovery = useCallback((delayMs = 120) => {
+    repaintNudgedRef.current = false;
+    window.setTimeout(() => {
+      nudgeTerminalRepaint();
+      const term = termRef.current;
+      if (term) {
+        term.refresh(0, Math.max(0, term.rows - 1));
+      }
+    }, delayMs);
+  }, [nudgeTerminalRepaint]);
+
   const handleFocus = useCallback(() => {
     setActivePaneId(paneId);
     termRef.current?.focus();
   }, [paneId, setActivePaneId]);
+
+  const restoreCanvasPreviousView = useCallback(() => {
+    const workspaceState = useWorkspaceStore.getState();
+    for (const workspace of workspaceState.workspaces) {
+      const surface = workspace.surfaces.find((entry) => entry.id === paneSurfaceId);
+      if (!surface || surface.layoutMode !== "canvas") {
+        continue;
+      }
+      const previous = surface.canvasState.previousView;
+      if (!previous) {
+        return;
+      }
+      setCanvasView(surface.id, previous);
+      setCanvasPreviousView(surface.id, null);
+      return;
+    }
+  }, [paneSurfaceId, setCanvasPreviousView, setCanvasView]);
+
+  const clearInlineApprovalPrompt = useCallback(() => {
+    if (!pendingInlineApprovalPromptRef.current) return;
+    pendingInlineApprovalPromptRef.current = null;
+    clearCanvasPanelStatus(paneId);
+    clearPaneNotifications(paneId, "approval");
+    restoreCanvasPreviousView();
+  }, [clearCanvasPanelStatus, clearPaneNotifications, paneId, restoreCanvasPreviousView]);
+
+  const maybeRaiseInlineApprovalPrompt = useCallback((chunkText: string) => {
+    if (!chunkText) return;
+    const cleaned = stripAnsi(chunkText);
+    if (!cleaned) return;
+
+    const nextBuffer = `${inlinePromptBufferRef.current}${cleaned}`.slice(-4096);
+    inlinePromptBufferRef.current = nextBuffer;
+
+    const prompt = detectInlineApprovalPrompt(nextBuffer);
+    if (!prompt) return;
+
+    const signature = `${paneId}:${prompt.toLowerCase()}`;
+    const now = Date.now();
+    const pending = pendingInlineApprovalPromptRef.current;
+    if (pending && pending.signature === signature && now - pending.at < 6000) {
+      return;
+    }
+
+    pendingInlineApprovalPromptRef.current = { signature, at: now };
+    setCanvasPanelStatus(paneId, "needs_approval");
+    clearPaneNotifications(paneId, "approval");
+    addNotification({
+      title: "Input required",
+      body: prompt,
+      subtitle: "Agent is waiting for approval",
+      icon: "shield",
+      source: "approval",
+      workspaceId: paneWorkspaceId ?? null,
+      surfaceId: paneSurfaceId ?? null,
+      paneId,
+      panelId: paneId,
+    });
+
+    const state = useWorkspaceStore.getState();
+    if (!state.notificationPanelOpen) {
+      state.toggleNotificationPanel();
+    }
+  }, [addNotification, clearPaneNotifications, paneId, paneSurfaceId, paneWorkspaceId, setCanvasPanelStatus]);
 
   useEffect(() => {
     if (resolvedApprovals.length === 0) return;
@@ -368,8 +551,11 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     }
 
     pendingApprovalIdRef.current = null;
+    clearCanvasPanelStatus(paneId);
+    clearPaneNotifications(paneId, "approval");
+    restoreCanvasPreviousView();
     markApprovalHandled(approval.id);
-  }, [markApprovalHandled, paneId, resolvedApprovals]);
+  }, [clearCanvasPanelStatus, clearPaneNotifications, markApprovalHandled, paneId, resolvedApprovals, restoreCanvasPreviousView]);
 
   useEffect(() => {
     let disposed = false;
@@ -433,10 +619,24 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon();
     const serializeAddon = new SerializeAddon();
+    let renderCleanup: (() => void) | null = null;
     term.loadAddon(fitAddon);
     term.loadAddon(searchAddon);
     term.loadAddon(serializeAddon);
-    term.loadAddon(new CanvasAddon());
+    try {
+      const webglAddon = new WebglAddon();
+      term.loadAddon(webglAddon);
+      const contextLossDisposable = webglAddon.onContextLoss(() => {
+        try {
+          term.loadAddon(new CanvasAddon());
+        } catch {
+          // ignore fallback initialization failures
+        }
+      });
+      renderCleanup = () => contextLossDisposable.dispose();
+    } catch {
+      term.loadAddon(new CanvasAddon());
+    }
     term.loadAddon(new WebLinksAddon());
 
     term.open(containerRef.current);
@@ -635,7 +835,9 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     });
 
     term.onSelectionChange(() => {
-      if (autoCopyOnSelectRef.current && term.hasSelection()) {
+      const selected = term.hasSelection();
+      setHasSelection(selected);
+      if (autoCopyOnSelectRef.current && selected) {
         void copySelection();
       }
     });
@@ -650,6 +852,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
       event.clipboardData?.setData("text/plain", selection);
       void writeClipboardText(selection);
       term.clearSelection();
+      setHasSelection(false);
     };
 
     const handleNativePaste = (event: ClipboardEvent) => {
@@ -681,6 +884,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
             sessionReadyRef.current = true;
             setDaemonState("reachable");
             setSharedCursorMode("idle");
+            clearCanvasPanelStatus(paneId);
             requestedSessionIdRef.current = event.sessionId;
             setPaneSessionId(paneId, event.sessionId);
             recordSessionReady({
@@ -691,18 +895,24 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
             });
             fitAttempts = 0;
             fitFrame = window.requestAnimationFrame(fitWhenReady);
+            scheduleRepaintRecovery();
+            pendingInlineApprovalPromptRef.current = null;
+            inlinePromptBufferRef.current = "";
             return;
           }
 
           if (event.type === "output") {
-            term.write(decodeBase64ToBytes(event.data));
+            const decodedBytes = decodeBase64ToBytes(event.data);
+            const decodedText = decodeBase64ToText(event.data);
+            term.write(decodedBytes);
             recordCognitiveOutput({
               paneId,
               workspaceId: paneWorkspaceId ?? null,
               surfaceId: paneSurfaceId ?? null,
               sessionId: event.sessionId ?? requestedSessionIdRef.current ?? null,
-              text: decodeBase64ToText(event.data),
+              text: decodedText,
             });
+            maybeRaiseInlineApprovalPrompt(decodedText);
             scheduleRollingSnapshot();
             return;
           }
@@ -712,6 +922,19 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
             const approval = event.approval;
             const approvalId = approval.approvalId ?? approval.approval_id;
             approvalCommandByIdRef.current[approvalId] = approval.command;
+            setCanvasPanelStatus(paneId, "needs_approval");
+            clearPaneNotifications(paneId, "approval");
+            addNotification({
+              title: "Approval required",
+              body: approval.command,
+              subtitle: "Managed command paused",
+              icon: "shield",
+              source: "approval",
+              workspaceId: paneWorkspaceId ?? null,
+              surfaceId: paneSurfaceId ?? null,
+              paneId,
+              panelId: paneId,
+            });
             addCommandLogEntry({
               command: approval.command,
               path: "approval-required",
@@ -736,6 +959,10 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
 
           if (event.type === "approval-resolved") {
             setSharedCursorMode("idle");
+            clearCanvasPanelStatus(paneId);
+            clearPaneNotifications(paneId, "approval");
+            restoreCanvasPreviousView();
+            pendingInlineApprovalPromptRef.current = null;
             const approvalId = String(event.approvalId ?? "");
             const command = approvalCommandByIdRef.current[approvalId] ?? `approval ${approvalId}`;
             const decision = String(event.decision ?? "unknown");
@@ -756,6 +983,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
 
           if (event.type === "managed-started") {
             setSharedCursorMode(event.source === "human" ? "human" : "agent");
+            setCanvasPanelStatus(paneId, "running");
             return;
           }
 
@@ -783,6 +1011,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
 
           if (event.type === "managed-finished") {
             setSharedCursorMode("idle");
+            setCanvasPanelStatus(paneId, "running");
             if (event.snapshot) {
               setSnapshots([
                 {
@@ -805,6 +1034,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
 
           if (event.type === "managed-rejected") {
             setSharedCursorMode("idle");
+            setCanvasPanelStatus(paneId, "idle");
             recordError({
               paneId,
               workspaceId: paneWorkspaceId ?? null,
@@ -855,6 +1085,9 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
             });
             sessionReadyRef.current = false;
             setDaemonState("unavailable");
+            setCanvasPanelStatus(paneId, "idle");
+            pendingInlineApprovalPromptRef.current = null;
+            inlinePromptBufferRef.current = "";
             recordSessionExited({
               paneId,
               workspaceId: paneWorkspaceId ?? null,
@@ -927,9 +1160,36 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
         });
 
         const shell = settings.defaultShell.trim() || undefined;
+        repaintNudgedRef.current = false;
+        let requestedSessionId = requestedSessionIdRef.current;
+        const cloneSourceSessionId = parseCloneSessionToken(requestedSessionId);
+        if (cloneSourceSessionId) {
+          const normalizedSourceSessionId = unwrapCloneSessionId(cloneSourceSessionId);
+          const clonedSessionId = await cloneSessionForDuplication(
+            paneId,
+            normalizedSourceSessionId,
+            {
+              workspaceId: paneWorkspaceId,
+              cols: term.cols,
+              rows: term.rows,
+            },
+          );
+          if (clonedSessionId) {
+            requestedSessionId = clonedSessionId;
+            requestedSessionIdRef.current = clonedSessionId;
+            setPaneSessionId(paneId, clonedSessionId);
+          } else if (normalizedSourceSessionId) {
+            // Degrade to source session id to avoid passing invalid clone tokens to the bridge.
+            requestedSessionId = normalizedSourceSessionId;
+            requestedSessionIdRef.current = normalizedSourceSessionId;
+            setPaneSessionId(paneId, normalizedSourceSessionId);
+          } else {
+            requestedSessionId = undefined;
+          }
+        }
         const bridge = await amux?.startTerminalSession?.({
           paneId,
-          sessionId: requestedSessionIdRef.current,
+          sessionId: requestedSessionId,
           shell,
           cwd: paneWorkspaceCwd || undefined,
           workspaceId: paneWorkspaceId,
@@ -945,6 +1205,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
             term.write(decodeBase64ToBytes(chunk));
           }
           scheduleRollingSnapshot();
+          scheduleRepaintRecovery(80);
         }
 
         if (typeof bridge?.sessionId === "string" && bridge.sessionId) {
@@ -957,9 +1218,13 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
           setDaemonState("reachable");
           fitAttempts = 0;
           fitFrame = window.requestAnimationFrame(fitWhenReady);
+          scheduleRepaintRecovery();
         } else {
-          sessionReadyRef.current = false;
+          // Bridge process is up but still waiting for ready/output events.
+          // Keep input path enabled so restored sessions don't feel inert.
+          sessionReadyRef.current = true;
           setDaemonState("checking");
+          scheduleRepaintRecovery(180);
         }
 
         if (typeof unsubscribe === "function") {
@@ -975,6 +1240,21 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     term.onData((data) => {
       const amux = (window as any).tamux ?? (window as any).amux;
       if (!amux?.sendTerminalInput || !sessionReadyRef.current) return;
+
+      if (pendingInlineApprovalPromptRef.current) {
+        let response = "";
+        if (data === "\r" || data === "\n") {
+          response = commandBufferRef.current.trim();
+        } else {
+          const newlineIndex = data.search(/[\r\n]/);
+          if (newlineIndex >= 0) {
+            response = `${commandBufferRef.current}${data.slice(0, newlineIndex)}`.trim();
+          }
+        }
+        if (/^(y|yes|n|no|1|2|allow|deny)\b/i.test(response)) {
+          clearInlineApprovalPrompt();
+        }
+      }
 
       if (!pendingApprovalIdRef.current) {
         let command = "";
@@ -1004,6 +1284,19 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
               riskLevel: risk.riskLevel,
               blastRadius: risk.blastRadius,
             });
+            setCanvasPanelStatus(paneId, "needs_approval");
+            clearPaneNotifications(paneId, "approval");
+            addNotification({
+              title: "Approval required",
+              body: command,
+              subtitle: "Risk policy intercepted command",
+              icon: "shield",
+              source: "approval",
+              workspaceId: paneWorkspaceId ?? null,
+              surfaceId: paneSurfaceId ?? null,
+              paneId,
+              panelId: paneId,
+            });
             return;
           }
         }
@@ -1016,12 +1309,21 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
 
     const handleContextMenu = (event: MouseEvent) => {
       event.preventDefault();
+      event.stopPropagation();
       handleFocus();
 
       const menuWidth = 220;
       const menuHeight = 286;
-      const x = Math.min(event.clientX, Math.max(window.innerWidth - menuWidth - 8, 8));
-      const y = Math.min(event.clientY, Math.max(window.innerHeight - menuHeight - 8, 8));
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+      if (!wrapperRect) {
+        return;
+      }
+      const localX = event.clientX - wrapperRect.left;
+      const localY = event.clientY - wrapperRect.top;
+      const maxX = Math.max(8, wrapperRect.width - menuWidth - 8);
+      const maxY = Math.max(8, wrapperRect.height - menuHeight - 8);
+      const x = Math.min(Math.max(localX, 8), maxX);
+      const y = Math.min(Math.max(localY, 8), maxY);
 
       setContextMenu({ visible: true, x, y });
     };
@@ -1087,6 +1389,99 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     });
 
     const wrapper = wrapperRef.current;
+    const mouseScaleState = { active: false };
+    const getTerminalScale = () => {
+      const container = containerRef.current;
+      if (!container) return 1;
+      const rect = container.getBoundingClientRect();
+      if (container.clientWidth <= 0 || container.clientHeight <= 0 || rect.width <= 0 || rect.height <= 0) {
+        return 1;
+      }
+      const scaleX = rect.width / container.clientWidth;
+      const scaleY = rect.height / container.clientHeight;
+      if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
+        return 1;
+      }
+      return (scaleX + scaleY) / 2;
+    };
+    const dispatchAdjustedMouseEvent = (event: MouseEvent, target: EventTarget): boolean => {
+      if (!event.isTrusted) return false;
+      const container = containerRef.current;
+      if (!container) return false;
+      const scale = getTerminalScale();
+      if (Math.abs(scale - 1) < 0.01) {
+        return false;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const adjustedClientX = rect.left + (event.clientX - rect.left) / scale;
+      const adjustedClientY = rect.top + (event.clientY - rect.top) / scale;
+      const adjusted = new MouseEvent(event.type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        detail: event.detail,
+        screenX: event.screenX,
+        screenY: event.screenY,
+        clientX: adjustedClientX,
+        clientY: adjustedClientY,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+        button: event.button,
+        buttons: event.buttons,
+        relatedTarget: event.relatedTarget,
+      });
+
+      target.dispatchEvent(adjusted);
+      return true;
+    };
+    const handleMouseDownCapture = (event: MouseEvent) => {
+      if (!event.isTrusted) return;
+      if (event.button !== 0) return;
+      const container = containerRef.current;
+      const target = event.target as Node | null;
+      if (!container || !target || !container.contains(target)) {
+        return;
+      }
+      if (!dispatchAdjustedMouseEvent(event, event.target as EventTarget)) {
+        return;
+      }
+
+      mouseScaleState.active = true;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
+    const handleMouseMoveCapture = (event: MouseEvent) => {
+      if (!event.isTrusted) return;
+      if (!mouseScaleState.active) return;
+      if (!dispatchAdjustedMouseEvent(event, document)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
+    const handleMouseUpCapture = (event: MouseEvent) => {
+      if (!event.isTrusted) return;
+      if (!mouseScaleState.active) return;
+      dispatchAdjustedMouseEvent(event, document);
+      mouseScaleState.active = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+    };
+    const clearMouseScaleState = () => {
+      mouseScaleState.active = false;
+    };
+
+    wrapper?.addEventListener("mousedown", handleMouseDownCapture, true);
+    window.addEventListener("mousemove", handleMouseMoveCapture, true);
+    window.addEventListener("mouseup", handleMouseUpCapture, true);
+    window.addEventListener("blur", clearMouseScaleState);
     wrapper?.addEventListener("contextmenu", handleContextMenu);
     wrapper?.addEventListener("dragover", handleDragOver);
     wrapper?.addEventListener("drop", handleDrop);
@@ -1113,6 +1508,8 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     return () => {
       cancelled = true;
       sessionReadyRef.current = false;
+      pendingInlineApprovalPromptRef.current = null;
+      inlinePromptBufferRef.current = "";
       window.cancelAnimationFrame(fitFrame);
       clearTimeout(rollingSnapshotTimeout);
       clearTimeout(resizeTimeout);
@@ -1120,6 +1517,10 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
       unregisterTerminalController();
       cleanupTerminalSubscription?.();
       appCommandUnsubscribe?.();
+      wrapper?.removeEventListener("mousedown", handleMouseDownCapture, true);
+      window.removeEventListener("mousemove", handleMouseMoveCapture, true);
+      window.removeEventListener("mouseup", handleMouseUpCapture, true);
+      window.removeEventListener("blur", clearMouseScaleState);
       wrapper?.removeEventListener("contextmenu", handleContextMenu);
       wrapper?.removeEventListener("dragover", handleDragOver);
       wrapper?.removeEventListener("drop", handleDrop);
@@ -1131,6 +1532,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
       window.removeEventListener("keydown", handleWindowKeyDown);
       searchAddonRef.current = null;
       serializeAddonRef.current = null;
+      renderCleanup?.();
       term.dispose();
     };
   }, [paneId, settings.themeName, settings.fontFamily, settings.fontSize,
@@ -1143,10 +1545,11 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     paneWorkspaceCwd, paneWorkspaceId, paneSurfaceId, settings.defaultShell, sendResize, sendTextInput,
     writeClipboardText, captureRollingTranscript, trackInput, completeLatestPendingEntry, addCommandLogEntry,
     recordCommandFinished, recordCommandStarted, recordCognitiveOutput, recordError, recordSessionExited, recordSessionReady,
-    isCommandAllowed, requestApproval, setHistoryResults, setSharedCursorMode, setSnapshots, setSymbolHits, upsertDaemonApproval]);
+    isCommandAllowed, requestApproval, setHistoryResults, setSharedCursorMode, setSnapshots, setSymbolHits, upsertDaemonApproval,
+    setCanvasPanelStatus, clearCanvasPanelStatus, addNotification, clearPaneNotifications, restoreCanvasPreviousView,
+    scheduleRepaintRecovery, clearInlineApprovalPrompt, maybeRaiseInlineApprovalPrompt]);
 
-  const isActive = activePaneId() === paneId;
-  const canCopy = Boolean(termRef.current?.hasSelection());
+  const canCopy = hasSelection;
   const canPaste = daemonState === "reachable";
   const menuItems = buildTerminalContextMenuItems({
     canCopy,
@@ -1155,6 +1558,9 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     pasteClipboard,
     termRef,
     splitActive,
+    duplicateSplit: (direction) => {
+      void duplicateSplit(direction);
+    },
     toggleZoom,
     handleClosePane,
     settings,
@@ -1177,7 +1583,6 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
         height: "100%",
         background: "var(--bg-primary)",
         padding: `${Math.max(12, settings.padding)}px`,
-        borderLeft: isActive ? "2px solid var(--accent)" : "2px solid transparent",
         position: "relative",
         outline: "none",
       }}

@@ -11,6 +11,7 @@ export function WorkspaceItem({
     onClose,
     onRename,
     onSetIcon,
+    children,
 }: {
     workspace: Workspace;
     index: number;
@@ -20,6 +21,7 @@ export function WorkspaceItem({
     onClose: () => void;
     onRename: (name: string) => void;
     onSetIcon: (icon: string) => void;
+    children?: React.ReactNode;
 }) {
     const [editing, setEditing] = useState(false);
     const [draftName, setDraftName] = useState(workspace.name);
@@ -32,9 +34,10 @@ export function WorkspaceItem({
     };
 
     return (
-        <div
-            onClick={onSelect}
-            style={{
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+            <div
+                onClick={onSelect}
+                style={{
                 display: "flex",
                 alignItems: "center",
                 gap: "var(--space-3)",
@@ -46,17 +49,17 @@ export function WorkspaceItem({
                 borderLeft: `2px solid ${isActive ? workspace.accentColor : "transparent"}`,
                 transition: "background var(--transition-fast)",
             }}
-            onMouseEnter={(e) => {
-                if (!isActive) {
-                    e.currentTarget.style.background = "var(--bg-secondary)";
-                }
-            }}
-            onMouseLeave={(e) => {
-                if (!isActive) {
-                    e.currentTarget.style.background = "transparent";
-                }
-            }}
-        >
+                onMouseEnter={(e) => {
+                    if (!isActive) {
+                        e.currentTarget.style.background = "var(--bg-secondary)";
+                    }
+                }}
+                onMouseLeave={(e) => {
+                    if (!isActive) {
+                        e.currentTarget.style.background = "transparent";
+                    }
+                }}
+            >
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "var(--space-1)", flexShrink: 0 }}>
                 <div style={iconBadgeStyle}>{workspace.icon}</div>
 
@@ -181,6 +184,8 @@ export function WorkspaceItem({
                     ×
                 </button>
             </div>
+            </div>
+            {children}
         </div>
     );
 }

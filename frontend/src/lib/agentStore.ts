@@ -46,6 +46,33 @@ export type AgentProviderId =
   | "minimax"
   | "custom";
 
+const AGENT_PROVIDER_IDS: AgentProviderId[] = [
+  "featherless",
+  "openai",
+  "anthropic",
+  "qwen",
+  "qwen-deepinfra",
+  "kimi",
+  "z.ai",
+  "openrouter",
+  "cerebras",
+  "together",
+  "groq",
+  "ollama",
+  "chutes",
+  "huggingface",
+  "minimax",
+  "custom",
+];
+
+function normalizeAgentProviderId(value: unknown): AgentProviderId {
+  if (typeof value !== "string") {
+    return "openai";
+  }
+  const normalized = value.trim() as AgentProviderId;
+  return AGENT_PROVIDER_IDS.includes(normalized) ? normalized : "openai";
+}
+
 export interface AgentProviderConfig {
   baseUrl: string;
   model: string;
@@ -457,7 +484,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   updateAgentSetting: (key, value) => {
     set((s) => {
-      const updated = { ...s.agentSettings, [key]: value };
+      const nextValue = key === "activeProvider"
+        ? normalizeAgentProviderId(value)
+        : value;
+      const updated = { ...s.agentSettings, [key]: nextValue };
       saveAgentSettings(updated);
       return { agentSettings: updated };
     });
@@ -478,6 +508,7 @@ export async function hydrateAgentStore(): Promise<void> {
     const merged: AgentSettings = {
       ...DEFAULT_AGENT_SETTINGS,
       ...diskState,
+      activeProvider: normalizeAgentProviderId(diskState.activeProvider),
       featherless: { ...DEFAULT_AGENT_SETTINGS.featherless, ...(diskState.featherless ?? {}) },
       openai: { ...DEFAULT_AGENT_SETTINGS.openai, ...(diskState.openai ?? {}) },
       anthropic: { ...DEFAULT_AGENT_SETTINGS.anthropic, ...(diskState.anthropic ?? {}) },

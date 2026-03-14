@@ -29,9 +29,12 @@ export interface NotificationState {
     workspaceId?: WorkspaceId | null;
     surfaceId?: SurfaceId | null;
     paneId?: PaneId | null;
+    panelId?: PaneId | null;
   }) => void;
 
   markRead: (id: NotificationId) => void;
+  removeNotification: (id: NotificationId) => void;
+  clearPaneNotifications: (paneId: PaneId, source?: NotificationSource) => void;
   markAllRead: () => void;
   markWorkspaceRead: (workspaceId: WorkspaceId) => void;
   clearAll: () => void;
@@ -49,6 +52,7 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       workspaceId: opts.workspaceId ?? null,
       surfaceId: opts.surfaceId ?? null,
       paneId: opts.paneId ?? null,
+      panelId: opts.panelId ?? opts.paneId ?? null,
       title: opts.title,
       subtitle: opts.subtitle ?? null,
       body: opts.body,
@@ -73,6 +77,34 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
       const notifications = s.notifications.map((n) =>
         n.id === id ? { ...n, isRead: true } : n
       );
+      return {
+        notifications,
+        unreadCount: notifications.filter((n) => !n.isRead).length,
+      };
+    });
+  },
+
+  removeNotification: (id) => {
+    set((s) => {
+      const notifications = s.notifications.filter((entry) => entry.id !== id);
+      return {
+        notifications,
+        unreadCount: notifications.filter((n) => !n.isRead).length,
+      };
+    });
+  },
+
+  clearPaneNotifications: (paneId, source) => {
+    set((s) => {
+      const notifications = s.notifications.filter((entry) => {
+        if (entry.paneId !== paneId && entry.panelId !== paneId) {
+          return true;
+        }
+        if (!source) {
+          return false;
+        }
+        return entry.source !== source;
+      });
       return {
         notifications,
         unreadCount: notifications.filter((n) => !n.isRead).length,

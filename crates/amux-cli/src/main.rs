@@ -37,6 +37,22 @@ enum Commands {
         id: String,
     },
 
+    /// Clone an existing session into a new independent session.
+    Clone {
+        /// Source session ID.
+        #[arg(long)]
+        source: String,
+        /// Optional terminal columns override.
+        #[arg(long)]
+        cols: Option<u16>,
+        /// Optional terminal rows override.
+        #[arg(long)]
+        rows: Option<u16>,
+        /// Optional workspace override.
+        #[arg(short, long)]
+        workspace: Option<String>,
+    },
+
     /// Kill a session.
     Kill {
         /// Session ID.
@@ -142,7 +158,10 @@ async fn main() -> Result<()> {
             if sessions.is_empty() {
                 println!("No active sessions.");
             } else {
-                println!("{:<38} {:>5} {:>5}  {:>5}  {}", "ID", "COLS", "ROWS", "ALIVE", "CWD");
+                println!(
+                    "{:<38} {:>5} {:>5}  {:>5}  {}",
+                    "ID", "COLS", "ROWS", "ALIVE", "CWD"
+                );
                 for s in sessions {
                     println!(
                         "{:<38} {:>5} {:>5}  {:>5}  {}",
@@ -156,7 +175,11 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::New { shell, cwd, workspace } => {
+        Commands::New {
+            shell,
+            cwd,
+            workspace,
+        } => {
             let id = client::spawn_session(shell, cwd, workspace).await?;
             println!("Session created: {id}");
         }
@@ -166,19 +189,32 @@ async fn main() -> Result<()> {
             client::attach_session(&id).await?;
         }
 
+        Commands::Clone {
+            source,
+            cols,
+            rows,
+            workspace,
+        } => {
+            let id = client::clone_session(&source, workspace, cols, rows).await?;
+            println!("{id}");
+        }
+
         Commands::Kill { id } => {
             client::kill_session(&id).await?;
             println!("Session killed: {id}");
         }
 
         Commands::Git { path } => {
-            let abs_path = std::fs::canonicalize(&path)
-                .unwrap_or_else(|_| std::path::PathBuf::from(&path));
+            let abs_path =
+                std::fs::canonicalize(&path).unwrap_or_else(|_| std::path::PathBuf::from(&path));
             let info = client::get_git_status(abs_path.to_string_lossy().to_string()).await?;
             println!("Branch: {}", info.branch.as_deref().unwrap_or("(none)"));
             println!("Dirty:  {}", info.is_dirty);
             println!("Ahead:  {} Behind: {}", info.ahead, info.behind);
-            println!("Staged: {} Modified: {} Untracked: {}", info.staged, info.modified, info.untracked);
+            println!(
+                "Staged: {} Modified: {} Untracked: {}",
+                info.staged, info.modified, info.untracked
+            );
         }
 
         Commands::Scrub { text } => {

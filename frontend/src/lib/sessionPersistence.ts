@@ -70,9 +70,34 @@ export function captureSession(): PersistedSession {
             id: sf.id,
             name: sf.name,
             icon: sf.icon,
+            layoutMode: sf.layoutMode,
             layout: sf.layout,
             activePaneId: sf.activePaneId,
             paneNames: sf.paneNames,
+            paneIcons: sf.paneIcons,
+            canvasState: sf.layoutMode === "canvas"
+              ? {
+                panX: sf.canvasState.panX,
+                panY: sf.canvasState.panY,
+                zoomLevel: sf.canvasState.zoomLevel,
+                previousView: sf.canvasState.previousView,
+              }
+              : undefined,
+            canvasPanels: sf.layoutMode === "canvas"
+              ? sf.canvasPanels.map((panel) => ({
+                id: panel.id,
+                paneId: panel.paneId,
+                title: panel.title,
+                icon: panel.icon,
+                x: panel.x,
+                y: panel.y,
+                width: panel.width,
+                height: panel.height,
+                status: panel.status,
+                sessionId: panel.sessionId,
+                lastActivityAt: panel.lastActivityAt,
+              }))
+              : undefined,
             panes: allLeafIds(sf.layout).map(
               (paneId): PersistedPane => ({
                 id: paneId,

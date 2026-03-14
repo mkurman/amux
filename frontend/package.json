@@ -30,6 +30,7 @@
     "@xterm/addon-search": "^0.15.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "@xyflow/react": "^12.10.1",
     "discord.js": "^14.25.1",
@@ -55,11 +56,11 @@
     "appId": "app.tamux.desktop",
     "productName": "tamux",
     "directories": {
-    "output": "release"
+      "output": "release"
     },
     "files": [
-    "dist/**/*",
-    "electron/**/*"
+      "dist/**/*",
+      "electron/**/*"
     ],
     "win": {
       "target": [
@@ -71,10 +72,10 @@
           "from": "dist/tamux-daemon.exe",
           "to": "bin/tamux-daemon.exe"
         },
-          {
-            "from": "dist/tamux.exe",
-            "to": "bin/tamux.exe"
-          }
+        {
+          "from": "dist/tamux.exe",
+          "to": "bin/tamux.exe"
+        }
       ],
       "icon": "assets/icon.ico"
     },

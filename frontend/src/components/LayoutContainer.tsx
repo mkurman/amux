@@ -2,6 +2,7 @@ import { useRef, useCallback } from "react";
 import { allLeafIds, computeLeafRects, computeSplitBoundaries, findLeaf, SplitBoundary } from "../lib/bspTree";
 import { useWorkspaceStore } from "../lib/workspaceStore";
 import { TerminalPane } from "./TerminalPane";
+import { InfiniteCanvasSurface } from "./InfiniteCanvasSurface";
 
 export function LayoutContainer() {
   const surface = useWorkspaceStore((s) => s.activeSurface());
@@ -31,6 +32,10 @@ export function LayoutContainer() {
         </div>
       </div>
     );
+  }
+
+  if (surface.layoutMode === "canvas") {
+    return <InfiniteCanvasSurface surface={surface} />;
   }
 
   if (zoomedPaneId && allLeafIds(surface.layout).includes(zoomedPaneId)) {

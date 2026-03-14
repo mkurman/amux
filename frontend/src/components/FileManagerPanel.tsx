@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useWorkspaceStore } from "../lib/workspaceStore";
 import { useFileManagerStore, type SshProfile } from "../lib/fileManagerStore";
+import { AppConfirmDialog } from "./AppConfirmDialog";
+import { AppPromptDialog } from "./AppPromptDialog";
 import { PaneView } from "./file-manager-panel/PaneView";
 import { SshProfilesPanel } from "./file-manager-panel/SshProfilesPanel";
 import {
@@ -54,6 +56,9 @@ export function FileManagerPanel({ style, className }: FileManagerPanelProps = {
     const [statusMessage, setStatusMessage] = useState<string>("");
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
     const [fullscreen, setFullscreen] = useState(true);
+    const [pendingDelete, setPendingDelete] = useState<{ name: string; path: string } | null>(null);
+    const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
+    const [newFolderDraft, setNewFolderDraft] = useState("new-folder");
 
     const sourcePane = activePane === "left" ? leftPane : rightPane;
     const targetPane = activePane === "left" ? rightPane : leftPane;
@@ -265,26 +270,17 @@ export function FileManagerPanel({ style, className }: FileManagerPanelProps = {
     async function handleDelete() {
         const bridge = getBridge();
         if (!bridge?.deleteFsPath || !selectedSourceEntry) return;
-
-        const ok = window.confirm(`Delete ${selectedSourceEntry.name}?`);
-        if (!ok) return;
-
-        await bridge.deleteFsPath(selectedSourceEntry.path);
-        await Promise.all([refreshPane("left"), refreshPane("right")]);
-        setStatusMessage(`Deleted ${selectedSourceEntry.name}`);
+        setPendingDelete({
+            name: selectedSourceEntry.name,
+            path: selectedSourceEntry.path,
+        });
     }
 
     async function handleCreateDirectory() {
         const bridge = getBridge();
         if (!bridge?.createFsDirectory) return;
-
-        const name = window.prompt("New folder name:", "new-folder");
-        if (!name) return;
-
-        const destination = joinPath(sourcePane.path, name.trim());
-        await bridge.createFsDirectory(destination);
-        await refreshPane(activePane);
-        setStatusMessage(`Created ${name.trim()}`);
+        setNewFolderDraft("new-folder");
+        setNewFolderDialogOpen(true);
     }
 
     async function handleReveal() {
@@ -478,6 +474,52 @@ export function FileManagerPanel({ style, className }: FileManagerPanelProps = {
                 runSshProfile={runSshProfile}
                 removeSshProfile={removeSshProfile}
                 setStatusMessage={setStatusMessage}
+            />
+
+            <AppConfirmDialog
+                open={Boolean(pendingDelete)}
+                title={pendingDelete ? `Delete '${pendingDelete.name}'?` : ""}
+                message="This action permanently deletes the selected file or directory."
+                confirmLabel="Delete"
+                tone="danger"
+                onCancel={() => setPendingDelete(null)}
+                onConfirm={() => {
+                    if (!pendingDelete) return;
+                    const bridge = getBridge();
+                    if (!bridge?.deleteFsPath) {
+                        setPendingDelete(null);
+                        return;
+                    }
+                    void bridge.deleteFsPath(pendingDelete.path)
+                        .then(() => Promise.all([refreshPane("left"), refreshPane("right")]))
+                        .then(() => setStatusMessage(`Deleted ${pendingDelete.name}`))
+                        .finally(() => setPendingDelete(null));
+                }}
+            />
+
+            <AppPromptDialog
+                open={newFolderDialogOpen}
+                title="Create New Folder"
+                message={`Create a new directory in '${sourcePane.path}'.`}
+                confirmLabel="Create"
+                tone="neutral"
+                defaultValue={newFolderDraft}
+                placeholder="Folder name"
+                onCancel={() => setNewFolderDialogOpen(false)}
+                onConfirm={(value) => {
+                    const bridge = getBridge();
+                    const nextName = value.trim();
+                    if (!bridge?.createFsDirectory || !nextName) {
+                        setNewFolderDialogOpen(false);
+                        return;
+                    }
+
+                    const destination = joinPath(sourcePane.path, nextName);
+                    void bridge.createFsDirectory(destination)
+                        .then(() => refreshPane(activePane))
+                        .then(() => setStatusMessage(`Created ${nextName}`))
+                        .finally(() => setNewFolderDialogOpen(false));
+                }}
             />
         </div>
     );

@@ -10,11 +10,13 @@ const DAEMON_NAME = 'tamux-daemon';
 const CLI_NAME = 'tamux';
 const DAEMON_TCP_HOST = '127.0.0.1';
 const DAEMON_TCP_PORT = 17563;
+const CLONE_SESSION_PREFIX = 'clone:';
 const MAX_TERMINAL_HISTORY_BYTES = 1024 * 1024;
 const MAX_REATTACH_HISTORY_BYTES = 64 * 1024;
 const VISION_SCREENSHOT_TTL_MS = 10 * 60 * 1000;
 let mainWindow = null;
 const terminalBridges = new Map();
+const paneSessionHints = new Map();
 
 // ---------------------------------------------------------------------------
 // WhatsApp bridge sidecar management
@@ -1050,9 +1052,9 @@ function getCompanionBinaryPath(binaryName) {
     if (isDev) {
         const repoRoot = path.join(__dirname, '..', '..');
         const candidates = [
-            path.join(repoRoot, 'dist', exeName),
-            path.join(repoRoot, 'target', 'release', exeName),
             path.join(repoRoot, 'target', 'debug', exeName),
+            path.join(repoRoot, 'target', 'release', exeName),
+            path.join(repoRoot, 'dist', exeName),
             path.join(repoRoot, 'target', 'x86_64-pc-windows-gnu', 'release', exeName),
         ];
 
@@ -1225,6 +1227,22 @@ function getReplayHistory(bridge, maxBytes = MAX_REATTACH_HISTORY_BYTES) {
     return replay;
 }
 
+function parseCloneSessionToken(value) {
+    if (typeof value !== 'string') return null;
+    let trimmed = value.trim();
+    if (!trimmed.startsWith(CLONE_SESSION_PREFIX)) return null;
+    for (let depth = 0; depth < 4; depth += 1) {
+        if (!trimmed.startsWith(CLONE_SESSION_PREFIX)) {
+            break;
+        }
+        trimmed = trimmed.slice(CLONE_SESSION_PREFIX.length).trim();
+        if (!trimmed) {
+            return null;
+        }
+    }
+    return trimmed || null;
+}
+
 function sendBridgeCommand(bridge, command) {
     if (!bridge || bridge.process.killed || !bridge.process.stdin.writable) return;
     bridge.process.stdin.write(`${JSON.stringify(command)}\n`);
@@ -1273,6 +1291,9 @@ function stopTerminalBridge(paneId, killSession = false, force = false) {
     if (bridge.process.killed) {
         terminalBridges.delete(paneId);
     }
+    if (killSession) {
+        paneSessionHints.delete(paneId);
+    }
     return true;
 }
 
@@ -1313,9 +1334,21 @@ async function startTerminalBridge(_event, options = {}) {
     const cols = Number.isFinite(options.cols) ? Math.max(2, Math.trunc(options.cols)) : 80;
     const rows = Number.isFinite(options.rows) ? Math.max(2, Math.trunc(options.rows)) : 24;
     const args = ['bridge', '--cols', String(cols), '--rows', String(rows)];
+    let requestedSessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
+    const cloneFromSessionId = parseCloneSessionToken(requestedSessionId);
+    if (cloneFromSessionId) {
+        const cloned = await cloneTerminalSession(null, {
+            sourcePaneId: typeof options.sourcePaneId === 'string' ? options.sourcePaneId : null,
+            sourceSessionId: cloneFromSessionId,
+            workspaceId: typeof options.workspaceId === 'string' ? options.workspaceId : null,
+            cols,
+            rows,
+        });
+        requestedSessionId = typeof cloned?.sessionId === 'string' ? cloned.sessionId.trim() : '';
+    }
 
-    if (typeof options.sessionId === 'string' && options.sessionId) {
-        args.push('--session', options.sessionId);
+    if (requestedSessionId) {
+        args.push('--session', requestedSessionId);
     }
     if (typeof options.shell === 'string' && options.shell) {
         args.push('--shell', options.shell);
@@ -1336,7 +1369,7 @@ async function startTerminalBridge(_event, options = {}) {
     const bridge = {
         process: bridgeProcess,
         paneId,
-        sessionId: options.sessionId ?? null,
+        sessionId: requestedSessionId || null,
         ready: false,
         closing: false,
         outputHistory: [],
@@ -1344,6 +1377,9 @@ async function startTerminalBridge(_event, options = {}) {
         stdoutBuffer: '',
         stderrBuffer: '',
     };
+    if (typeof bridge.sessionId === 'string' && bridge.sessionId) {
+        paneSessionHints.set(paneId, bridge.sessionId);
+    }
 
     terminalBridges.set(paneId, bridge);
 
@@ -1369,6 +1405,7 @@ async function startTerminalBridge(_event, options = {}) {
             if (event.type === 'ready') {
                 bridge.ready = true;
                 bridge.sessionId = event.session_id;
+                paneSessionHints.set(paneId, event.session_id);
                 emitTerminalEvent(paneId, {
                     type: 'ready',
                     sessionId: event.session_id,
@@ -1392,6 +1429,7 @@ async function startTerminalBridge(_event, options = {}) {
                     sessionId: event.session_id,
                     exitCode: event.exit_code,
                 });
+                paneSessionHints.delete(paneId);
                 terminalBridges.delete(paneId);
                 continue;
             }
@@ -1588,6 +1626,121 @@ function resizeTerminalSession(_event, paneId, cols, rows) {
         rows: Math.max(2, Math.trunc(rows)),
     });
     return true;
+}
+
+async function cloneTerminalSession(_event, payload = {}) {
+    const sourcePaneId = typeof payload.sourcePaneId === 'string' ? payload.sourcePaneId.trim() : '';
+    const requestedSourceSessionIdRaw = typeof payload.sourceSessionId === 'string' ? payload.sourceSessionId.trim() : '';
+    const requestedSourceSessionId = parseCloneSessionToken(requestedSourceSessionIdRaw) || requestedSourceSessionIdRaw;
+    let sourceSessionId = requestedSourceSessionId;
+
+    if (sourcePaneId) {
+        const bridge = terminalBridges.get(sourcePaneId);
+        if (bridge && typeof bridge.sessionId === 'string' && bridge.sessionId.trim()) {
+            sourceSessionId = bridge.sessionId.trim();
+        }
+        if (!sourceSessionId) {
+            const hinted = paneSessionHints.get(sourcePaneId);
+            if (typeof hinted === 'string' && hinted.trim()) {
+                sourceSessionId = hinted.trim();
+            }
+        }
+    }
+
+    logToFile('info', 'clone terminal request', {
+        sourcePaneId: sourcePaneId || null,
+        requestedSourceSessionId: requestedSourceSessionId || null,
+        resolvedSourceSessionId: sourceSessionId || null,
+        hasLiveBridge: sourcePaneId ? terminalBridges.has(sourcePaneId) : false,
+        hasHint: sourcePaneId ? paneSessionHints.has(sourcePaneId) : false,
+    });
+
+    if (!sourceSessionId) {
+        throw new Error('sourceSessionId is required (and no live source pane session was found)');
+    }
+
+    const daemonReady = await spawnDaemon();
+    if (!daemonReady) {
+        throw new Error('daemon is not reachable');
+    }
+
+    const cliPath = getCliPath();
+    if (!fs.existsSync(cliPath)) {
+        throw new Error(`tamux CLI not found at ${cliPath}`);
+    }
+
+    const args = ['clone', '--source', sourceSessionId];
+    if (typeof payload.workspaceId === 'string' && payload.workspaceId.trim()) {
+        args.push('--workspace', payload.workspaceId.trim());
+    }
+    if (Number.isFinite(payload.cols)) {
+        args.push('--cols', String(Math.max(2, Math.trunc(payload.cols))));
+    }
+    if (Number.isFinite(payload.rows)) {
+        args.push('--rows', String(Math.max(2, Math.trunc(payload.rows))));
+    }
+
+    logToFile('info', 'cloning terminal session', {
+        sourcePaneId: sourcePaneId || null,
+        requestedSourceSessionId: requestedSourceSessionId || null,
+        sourceSessionId,
+        workspaceId: payload.workspaceId ?? null,
+        cols: payload.cols ?? null,
+        rows: payload.rows ?? null,
+    });
+
+    try {
+        const result = await new Promise((resolve, reject) => {
+            const child = spawn(cliPath, args, {
+                cwd: path.dirname(cliPath),
+                windowsHide: true,
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            child.stdout.on('data', (chunk) => {
+                stdout += chunk.toString('utf8');
+            });
+            child.stderr.on('data', (chunk) => {
+                stderr += chunk.toString('utf8');
+            });
+            child.on('error', (error) => {
+                reject(error);
+            });
+            child.on('exit', (code) => {
+                if (code !== 0) {
+                    reject(new Error((stderr || stdout || `tamux clone exited with code ${code}`).trim()));
+                    return;
+                }
+
+                const lines = stdout
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter(Boolean);
+                const sessionId = lines[lines.length - 1] ?? '';
+                if (!sessionId) {
+                    reject(new Error('tamux clone did not return a session id'));
+                    return;
+                }
+
+                resolve({ sessionId });
+            });
+        });
+
+        logToFile('info', 'cloned terminal session', {
+            sourceSessionId,
+            clonedSessionId: result.sessionId,
+        });
+        return result;
+    } catch (error) {
+        logToFile('error', 'failed to clone terminal session', {
+            sourceSessionId,
+            message: error?.message ?? String(error),
+        });
+        throw error;
+    }
 }
 
 function executeManagedCommand(_event, paneId, payload = {}) {
@@ -2543,6 +2696,7 @@ function registerIpcHandlers() {
     ipcMain.handle('terminal-find-symbol', findManagedSymbol);
     ipcMain.handle('terminal-list-snapshots', listSnapshots);
     ipcMain.handle('terminal-restore-snapshot', restoreSnapshot);
+    ipcMain.handle('terminal-clone-session', cloneTerminalSession);
     ipcMain.handle('terminal-resize', resizeTerminalSession);
     ipcMain.handle('terminal-stop', (_event, paneId, killSession) => stopTerminalBridge(paneId, Boolean(killSession)));
     ipcMain.handle('window-minimize', () => mainWindow?.minimize());

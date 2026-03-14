@@ -4,9 +4,15 @@ import { formatTime } from "./shared";
 export function NotificationList({
     notifications,
     markRead,
+    onSelectNotification,
+    onApproveNotification,
+    onDenyNotification,
 }: {
     notifications: TerminalNotification[];
     markRead: (id: string) => void;
+    onSelectNotification?: (notification: TerminalNotification) => void;
+    onApproveNotification?: (notification: TerminalNotification) => void;
+    onDenyNotification?: (notification: TerminalNotification) => void;
 }) {
     return (
         <div style={{ flex: 1, overflow: "auto", padding: "4px 0" }}>
@@ -25,7 +31,10 @@ export function NotificationList({
                 notifications.map((notification) => (
                     <div
                         key={notification.id}
-                        onClick={() => markRead(notification.id)}
+                        onClick={() => {
+                            markRead(notification.id);
+                            onSelectNotification?.(notification);
+                        }}
                         style={{
                             padding: "12px 16px",
                             cursor: "pointer",
@@ -33,8 +42,12 @@ export function NotificationList({
                             opacity: notification.isRead ? 0.5 : 1,
                             margin: "0 10px 8px",
                             borderRadius: 0,
-                            border: "1px solid rgba(255,255,255,0.05)",
-                            background: "rgba(255,255,255,0.02)",
+                            border: notification.source === "approval"
+                                ? "1px solid var(--approval-border)"
+                                : "1px solid rgba(255,255,255,0.05)",
+                            background: notification.source === "approval"
+                                ? "var(--approval-soft)"
+                                : "rgba(255,255,255,0.02)",
                         }}
                         onMouseEnter={(event) => {
                             event.currentTarget.style.background = "rgba(255,255,255,0.04)";
@@ -95,6 +108,48 @@ export function NotificationList({
                                         transition: "width 0.3s ease",
                                     }}
                                 />
+                            </div>
+                        ) : null}
+                        {notification.source === "approval" ? (
+                            <div style={{ marginTop: 10, display: "flex", gap: 8, marginLeft: notification.isRead ? 0 : 12 }}>
+                                <button
+                                    type="button"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        markRead(notification.id);
+                                        onApproveNotification?.(notification);
+                                    }}
+                                    style={{
+                                        border: "1px solid rgba(74, 222, 128, 0.36)",
+                                        background: "rgba(74, 222, 128, 0.16)",
+                                        color: "var(--success)",
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        padding: "5px 10px",
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Allow (y)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        markRead(notification.id);
+                                        onDenyNotification?.(notification);
+                                    }}
+                                    style={{
+                                        border: "1px solid rgba(248, 113, 113, 0.36)",
+                                        background: "rgba(248, 113, 113, 0.14)",
+                                        color: "var(--danger)",
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        padding: "5px 10px",
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Deny (n)
+                                </button>
                             </div>
                         ) : null}
                     </div>

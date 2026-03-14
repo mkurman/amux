@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use amux_protocol::{ClientMessage, DaemonMessage};
+use anyhow::Result;
 use futures::SinkExt;
+use futures::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::broadcast;
 use tokio_util::codec::Framed;
-use futures::StreamExt;
 
 use crate::session_manager::SessionManager;
 
 /// Socket path / pipe name for IPC.
 #[cfg(unix)]
 pub fn socket_path() -> std::path::PathBuf {
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| "/tmp".to_string());
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock")
 }
 
@@ -75,10 +74,7 @@ async fn run_unix(manager: Arc<SessionManager>) -> Result<()> {
 }
 
 #[cfg(unix)]
-async fn accept_loop_unix(
-    listener: tokio::net::UnixListener,
-    manager: Arc<SessionManager>,
-) {
+async fn accept_loop_unix(listener: tokio::net::UnixListener, manager: Arc<SessionManager>) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -139,10 +135,7 @@ async fn run_tcp_fallback(manager: Arc<SessionManager>) -> Result<()> {
 }
 
 #[allow(dead_code)]
-async fn accept_loop_tcp(
-    listener: tokio::net::TcpListener,
-    manager: Arc<SessionManager>,
-) {
+async fn accept_loop_tcp(listener: tokio::net::TcpListener, manager: Arc<SessionManager>) {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
@@ -173,7 +166,8 @@ where
     let mut framed = Framed::new(stream, DaemonCodec);
 
     // Track which sessions this client is attached to so we can fan-out output.
-    let mut attached_rxs: Vec<(amux_protocol::SessionId, broadcast::Receiver<DaemonMessage>)> = Vec::new();
+    let mut attached_rxs: Vec<(amux_protocol::SessionId, broadcast::Receiver<DaemonMessage>)> =
+        Vec::new();
 
     loop {
         // We need to select between: incoming client messages and output from attached sessions.
@@ -216,12 +210,47 @@ where
                     framed.send(DaemonMessage::Pong).await?;
                 }
 
-                ClientMessage::SpawnSession { shell, cwd, env, workspace_id, cols, rows } => {
-                    match manager.spawn(shell, cwd, workspace_id, env, cols, rows).await {
+                ClientMessage::SpawnSession {
+                    shell,
+                    cwd,
+                    env,
+                    workspace_id,
+                    cols,
+                    rows,
+                } => {
+                    match manager
+                        .spawn(shell, cwd, workspace_id, env, cols, rows)
+                        .await
+                    {
+                        Ok((id, rx)) => {
+                            attached_rxs.push((id, rx));
+                            framed.send(DaemonMessage::SessionSpawned { id }).await?;
+                        }
+                        Err(e) => {
+                            framed
+                                .send(DaemonMessage::Error {
+                                    message: e.to_string(),
+                                })
+                                .await?;
+                        }
+                    }
+                }
+
+                ClientMessage::CloneSession {
+                    source_id,
+                    workspace_id,
+                    cols,
+                    rows,
+                    replay_scrollback,
+                } => {
+                    match manager
+                        .clone_session(source_id, workspace_id, cols, rows, replay_scrollback)
+                        .await
+                    {
                         Ok((id, rx)) => {
                             attached_rxs.push((id, rx));
                             framed
-                                .send(DaemonMessage::SessionSpawned { id })
+                                .send(DaemonMessage::SessionCloned { source_id, id })
                                 .await?;
                         }
                         Err(e) => {
@@ -234,38 +263,30 @@ where
                     }
                 }
 
-                ClientMessage::AttachSession { id } => {
-                    match manager.subscribe(id).await {
-                        Ok(rx) => {
-                            attached_rxs.push((id, rx));
-                            framed
-                                .send(DaemonMessage::SessionAttached { id })
-                                .await?;
-                        }
-                        Err(e) => {
-                            framed
-                                .send(DaemonMessage::Error {
-                                    message: e.to_string(),
-                                })
-                                .await?;
-                        }
+                ClientMessage::AttachSession { id } => match manager.subscribe(id).await {
+                    Ok(rx) => {
+                        attached_rxs.push((id, rx));
+                        framed.send(DaemonMessage::SessionAttached { id }).await?;
                     }
-                }
+                    Err(e) => {
+                        framed
+                            .send(DaemonMessage::Error {
+                                message: e.to_string(),
+                            })
+                            .await?;
+                    }
+                },
 
                 ClientMessage::DetachSession { id } => {
                     attached_rxs.retain(|(sid, _)| *sid != id);
-                    framed
-                        .send(DaemonMessage::SessionDetached { id })
-                        .await?;
+                    framed.send(DaemonMessage::SessionDetached { id }).await?;
                 }
 
                 ClientMessage::KillSession { id } => {
                     attached_rxs.retain(|(sid, _)| *sid != id);
                     match manager.kill(id).await {
                         Ok(()) => {
-                            framed
-                                .send(DaemonMessage::SessionKilled { id })
-                                .await?;
+                            framed.send(DaemonMessage::SessionKilled { id }).await?;
                         }
                         Err(e) => {
                             framed
@@ -333,17 +354,13 @@ where
 
                 ClientMessage::ListSessions => {
                     let sessions = manager.list().await;
-                    framed
-                        .send(DaemonMessage::SessionList { sessions })
-                        .await?;
+                    framed.send(DaemonMessage::SessionList { sessions }).await?;
                 }
 
                 ClientMessage::GetScrollback { id, max_lines } => {
                     match manager.get_scrollback(id, max_lines).await {
                         Ok(data) => {
-                            framed
-                                .send(DaemonMessage::Scrollback { id, data })
-                                .await?;
+                            framed.send(DaemonMessage::Scrollback { id, data }).await?;
                         }
                         Err(e) => {
                             framed
@@ -360,10 +377,7 @@ where
                         Ok(text) => {
                             // TODO: Send to AI model. For now, return the raw text.
                             framed
-                                .send(DaemonMessage::AnalysisResult {
-                                    id,
-                                    result: text,
-                                })
+                                .send(DaemonMessage::AnalysisResult { id, result: text })
                                 .await?;
                         }
                         Err(e) => {
@@ -419,7 +433,11 @@ where
                     symbol,
                     limit,
                 } => {
-                    let matches = manager.find_symbol_matches(&workspace_root, &symbol, limit.unwrap_or(16).max(1));
+                    let matches = manager.find_symbol_matches(
+                        &workspace_root,
+                        &symbol,
+                        limit.unwrap_or(16).max(1),
+                    );
                     framed
                         .send(DaemonMessage::SymbolSearchResult { symbol, matches })
                         .await?;
@@ -465,16 +483,12 @@ where
 
                 ClientMessage::ListWorkspaceSessions { workspace_id } => {
                     let sessions = manager.list_workspace(&workspace_id).await;
-                    framed
-                        .send(DaemonMessage::SessionList { sessions })
-                        .await?;
+                    framed.send(DaemonMessage::SessionList { sessions }).await?;
                 }
 
                 ClientMessage::GetGitStatus { path } => {
                     let info = crate::git::get_git_status(&path);
-                    framed
-                        .send(DaemonMessage::GitStatus { path, info })
-                        .await?;
+                    framed.send(DaemonMessage::GitStatus { path, info }).await?;
                 }
 
                 ClientMessage::SubscribeNotifications => {
@@ -495,21 +509,26 @@ where
                         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/amux-criu"));
 
                     if !crate::criu::is_available() {
-                        framed.send(DaemonMessage::SessionCheckpointed {
-                            id,
-                            ok: false,
-                            path: None,
-                            message: "CRIU is not available on this system".to_string(),
-                        }).await?;
+                        framed
+                            .send(DaemonMessage::SessionCheckpointed {
+                                id,
+                                ok: false,
+                                path: None,
+                                message: "CRIU is not available on this system".to_string(),
+                            })
+                            .await?;
                     } else {
                         // Get the PID from the session - for now report unavailable
                         // as we'd need to track the child PID in PtySession
-                        framed.send(DaemonMessage::SessionCheckpointed {
-                            id,
-                            ok: false,
-                            path: Some(dump_dir.to_string_lossy().into_owned()),
-                            message: "CRIU checkpoint: session PID tracking not yet integrated".to_string(),
-                        }).await?;
+                        framed
+                            .send(DaemonMessage::SessionCheckpointed {
+                                id,
+                                ok: false,
+                                path: Some(dump_dir.to_string_lossy().into_owned()),
+                                message: "CRIU checkpoint: session PID tracking not yet integrated"
+                                    .to_string(),
+                            })
+                            .await?;
                     }
                 }
 

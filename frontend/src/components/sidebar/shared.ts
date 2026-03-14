@@ -1,1 +1,1 @@
-export const ICON_CHOICES = ["term", "code", "api", "ops", "db", "ssh", "web"];
+export const ICON_CHOICES = ["terminal", "code", "api", "ops", "db", "ssh", "web"];

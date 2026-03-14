@@ -38,6 +38,20 @@ pub enum ClientMessage {
     /// Attach to an existing session (start receiving output).
     AttachSession { id: SessionId },
 
+    /// Clone an existing session into a new independent PTY session.
+    CloneSession {
+        /// Source session to clone metadata/scrollback from.
+        source_id: SessionId,
+        /// Optional workspace override for the cloned session.
+        workspace_id: Option<WorkspaceId>,
+        /// Optional terminal width override (defaults to source cols).
+        cols: Option<u16>,
+        /// Optional terminal height override (defaults to source rows).
+        rows: Option<u16>,
+        /// Whether to preload source scrollback into the clone.
+        replay_scrollback: bool,
+    },
+
     /// Detach from a session (stop receiving output; session keeps running).
     DetachSession { id: SessionId },
 
@@ -61,11 +75,7 @@ pub enum ClientMessage {
     },
 
     /// Notify the daemon about a terminal resize.
-    Resize {
-        id: SessionId,
-        cols: u16,
-        rows: u16,
-    },
+    Resize { id: SessionId, cols: u16, rows: u16 },
 
     /// List all active sessions.
     ListSessions,
@@ -87,10 +97,7 @@ pub enum ClientMessage {
     },
 
     /// Search daemon-managed command/transcript history.
-    SearchHistory {
-        query: String,
-        limit: Option<usize>,
-    },
+    SearchHistory { query: String, limit: Option<usize> },
 
     /// Generate a reusable skill document from historical executions.
     GenerateSkill {
@@ -106,14 +113,10 @@ pub enum ClientMessage {
     },
 
     /// List recorded workspace snapshots/checkpoints.
-    ListSnapshots {
-        workspace_id: Option<WorkspaceId>,
-    },
+    ListSnapshots { workspace_id: Option<WorkspaceId> },
 
     /// Restore a previously recorded snapshot.
-    RestoreSnapshot {
-        snapshot_id: String,
-    },
+    RestoreSnapshot { snapshot_id: String },
 
     /// Request git status for a working directory.
     GetGitStatus { path: String },
@@ -145,6 +148,9 @@ pub enum DaemonMessage {
     /// Confirmation that a session was spawned.
     SessionSpawned { id: SessionId },
 
+    /// Confirmation that a session was cloned.
+    SessionCloned { source_id: SessionId, id: SessionId },
+
     /// Confirmation that the client is now attached.
     SessionAttached { id: SessionId },
 
@@ -155,16 +161,16 @@ pub enum DaemonMessage {
     SessionKilled { id: SessionId },
 
     /// Session exited on its own (process exited).
-    SessionExited { id: SessionId, exit_code: Option<i32> },
+    SessionExited {
+        id: SessionId,
+        exit_code: Option<i32>,
+    },
 
     /// Terminal output bytes from a session.
     Output { id: SessionId, data: Vec<u8> },
 
     /// Shell lifecycle marker emitted by the daemon.
-    CommandStarted {
-        id: SessionId,
-        command: String,
-    },
+    CommandStarted { id: SessionId, command: String },
 
     /// Shell lifecycle marker emitted by the daemon.
     CommandFinished {
@@ -235,10 +241,7 @@ pub enum DaemonMessage {
     },
 
     /// Generated procedural skill document.
-    SkillGenerated {
-        title: String,
-        path: String,
-    },
+    SkillGenerated { title: String, path: String },
 
     /// Semantic symbol search results.
     SymbolSearchResult {
@@ -272,9 +275,7 @@ pub enum DaemonMessage {
     CwdChanged { id: SessionId, cwd: String },
 
     /// Telemetry integrity verification result.
-    TelemetryIntegrityResult {
-        results: Vec<TelemetryLedgerStatus>,
-    },
+    TelemetryIntegrityResult { results: Vec<TelemetryLedgerStatus> },
 
     /// Result of a CRIU checkpoint operation.
     SessionCheckpointed {

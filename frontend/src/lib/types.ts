@@ -14,6 +14,37 @@ export type SessionId = string;
 export type NotificationId = string;
 
 // ---------------------------------------------------------------------------
+// Infinite canvas
+// ---------------------------------------------------------------------------
+export type SurfaceLayoutMode = "bsp" | "canvas";
+export type CanvasPanelStatus = "running" | "idle" | "needs_approval";
+
+export interface CanvasViewSnapshot {
+  panX: number;
+  panY: number;
+  zoomLevel: number;
+}
+
+export interface CanvasState extends CanvasViewSnapshot {
+  previousView: CanvasViewSnapshot | null;
+  focusRequestNonce?: number;
+}
+
+export interface CanvasPanel {
+  id: string;
+  paneId: PaneId;
+  title: string;
+  icon: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  status: CanvasPanelStatus;
+  sessionId: SessionId | null;
+  lastActivityAt: number;
+}
+
+// ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
 export interface Workspace {
@@ -39,9 +70,13 @@ export interface Surface {
   workspaceId: WorkspaceId;
   name: string;
   icon: string;
+  layoutMode: SurfaceLayoutMode;
   layout: import("./bspTree").BspTree;
   paneNames: Record<PaneId, string>;
+  paneIcons: Record<PaneId, string>;
   activePaneId: PaneId | null;
+  canvasState: CanvasState;
+  canvasPanels: CanvasPanel[];
   createdAt: number;
 }
 
@@ -59,13 +94,14 @@ export interface PaneInfo {
 // ---------------------------------------------------------------------------
 // Notifications (OSC 9, 99, 777)
 // ---------------------------------------------------------------------------
-export type NotificationSource = "osc9" | "osc99" | "osc777" | "cli" | "system";
+export type NotificationSource = "osc9" | "osc99" | "osc777" | "cli" | "system" | "approval";
 
 export interface TerminalNotification {
   id: NotificationId;
   workspaceId: WorkspaceId | null;
   surfaceId: SurfaceId | null;
   paneId: PaneId | null;
+  panelId?: PaneId | null;
   title: string;
   subtitle: string | null;
   body: string;
@@ -289,10 +325,35 @@ export interface PersistedSurface {
   id: SurfaceId;
   name: string;
   icon: string;
+  layoutMode?: SurfaceLayoutMode;
   layout: import("./bspTree").BspTree;
   activePaneId: PaneId | null;
   paneNames?: Record<PaneId, string>;
+  paneIcons?: Record<PaneId, string>;
+  canvasState?: PersistedCanvasState;
+  canvasPanels?: PersistedCanvasPanel[];
   panes: PersistedPane[];
+}
+
+export interface PersistedCanvasState {
+  panX: number;
+  panY: number;
+  zoomLevel: number;
+  previousView: CanvasViewSnapshot | null;
+}
+
+export interface PersistedCanvasPanel {
+  id: string;
+  paneId: PaneId;
+  title: string;
+  icon: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  status: CanvasPanelStatus;
+  sessionId: SessionId | null;
+  lastActivityAt: number;
 }
 
 export type HotkeyAction =

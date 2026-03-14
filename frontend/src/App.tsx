@@ -837,6 +837,10 @@ function MissionDeck({
   onOpenMission: () => void;
   onOpenVault: () => void;
 }) {
+  const providerText = typeof activeProvider === "string" && activeProvider.trim().length > 0
+    ? activeProvider
+    : "unknown";
+
   return (
     <div
       className="amux-shell-card"
@@ -877,7 +881,7 @@ function MissionDeck({
           {surfaceName}
         </span>
         <span className="amux-chip" style={{ fontSize: 10, padding: "2px 6px" }}>
-          provider {activeProvider}
+          provider {providerText}
         </span>
       </div>
 

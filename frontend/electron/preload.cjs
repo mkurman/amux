@@ -142,6 +142,7 @@ const bridgeApi = {
     findManagedSymbol: (paneId, workspaceRoot, symbol, limit) => ipcRenderer.invoke('terminal-find-symbol', paneId, workspaceRoot, symbol, limit),
     listSnapshots: (paneId, workspaceId) => ipcRenderer.invoke('terminal-list-snapshots', paneId, workspaceId),
     restoreSnapshot: (paneId, snapshotId) => ipcRenderer.invoke('terminal-restore-snapshot', paneId, snapshotId),
+    cloneTerminalSession: (payload) => ipcRenderer.invoke('terminal-clone-session', payload),
     resizeTerminalSession: (paneId, cols, rows) => ipcRenderer.invoke('terminal-resize', paneId, cols, rows),
     stopTerminalSession: (paneId, killSession) => ipcRenderer.invoke('terminal-stop', paneId, killSession),
     onTerminalEvent: (cb) => {

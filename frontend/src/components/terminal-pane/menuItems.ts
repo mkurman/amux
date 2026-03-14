@@ -9,6 +9,7 @@ export function buildTerminalContextMenuItems({
     pasteClipboard,
     termRef,
     splitActive,
+    duplicateSplit,
     toggleZoom,
     handleClosePane,
     settings,
@@ -23,6 +24,7 @@ export function buildTerminalContextMenuItems({
     pasteClipboard: () => Promise<void>;
     termRef: MutableRefObject<Terminal | null>;
     splitActive: (direction: "horizontal" | "vertical") => void;
+    duplicateSplit: (direction: "horizontal" | "vertical") => void;
     toggleZoom: () => void;
     handleClosePane: () => void;
     settings: { captureTranscriptsOnClear: boolean };
@@ -36,8 +38,10 @@ export function buildTerminalContextMenuItems({
         { label: "Paste", shortcut: "Ctrl+V", disabled: !canPaste, action: () => void pasteClipboard() },
         { label: "Select All", action: () => termRef.current?.selectAll() },
         { separator: true },
-        { label: "Split Right", shortcut: "Ctrl+D", action: () => splitActive("horizontal") },
-        { label: "Split Down", shortcut: "Ctrl+Shift+D", action: () => splitActive("vertical") },
+        { label: "Split Right", shortcut: "Ctrl+D", action: () => duplicateSplit("horizontal") },
+        { label: "Split Down", shortcut: "Ctrl+Shift+D", action: () => duplicateSplit("vertical") },
+        { label: "Split Empty Right", action: () => splitActive("horizontal") },
+        { label: "Split Empty Down", action: () => splitActive("vertical") },
         { separator: true },
         { label: "Zoom Pane", shortcut: "Ctrl+Shift+Z", action: () => toggleZoom() },
         { label: "Close Pane", shortcut: "Ctrl+Shift+W", danger: true, action: () => handleClosePane() },

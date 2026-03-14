@@ -1,6 +1,15 @@
-import { allLeafIds } from "../lib/bspTree";
+import { useState } from "react";
+import { allLeafIds, findLeaf } from "../lib/bspTree";
 import { useAgentMissionStore } from "../lib/agentMissionStore";
+import {
+  cloneSessionForDuplication,
+  queuePaneBootstrapCommand,
+  resolveDuplicateActiveBootstrapCommand,
+  resolveDuplicateBootstrapCommand,
+  resolveDuplicateSourceSessionId,
+} from "../lib/paneDuplication";
 import { useWorkspaceStore } from "../lib/workspaceStore";
+import { AppConfirmDialog } from "./AppConfirmDialog";
 import { SurfaceTabActions } from "./surface-tab-bar/SurfaceTabActions";
 import { SurfaceCreateButton } from "./surface-tab-bar/SurfaceCreateButton";
 import { SurfaceTabItem } from "./surface-tab-bar/SurfaceTabItem";
@@ -9,6 +18,7 @@ import { dividerStyle } from "./surface-tab-bar/shared";
 export function SurfaceTabBar() {
   const ws = useWorkspaceStore((s) => s.activeWorkspace());
   const createSurface = useWorkspaceStore((s) => s.createSurface);
+  const createCanvasPanel = useWorkspaceStore((s) => s.createCanvasPanel);
   const closeSurface = useWorkspaceStore((s) => s.closeSurface);
   const setActiveSurface = useWorkspaceStore((s) => s.setActiveSurface);
   const renameSurface = useWorkspaceStore((s) => s.renameSurface);
@@ -21,9 +31,46 @@ export function SurfaceTabBar() {
   const toggleZoom = useWorkspaceStore((s) => s.toggleZoom);
   const toggleWebBrowser = useWorkspaceStore((s) => s.toggleWebBrowser);
   const approvals = useAgentMissionStore((s) => s.approvals);
+  const operationalEvents = useAgentMissionStore((s) => s.operationalEvents);
+  const [pendingCloseSurface, setPendingCloseSurface] = useState<{ id: string; name: string } | null>(null);
 
   const surfaces = ws?.surfaces ?? [];
   const activeSurfaceId = ws?.activeSurfaceId ?? null;
+  const activeSurface = ws?.surfaces.find((surface) => surface.id === activeSurfaceId);
+  const activeLayoutMode = activeSurface?.layoutMode ?? "bsp";
+
+  const duplicateSplit = async (direction: "horizontal" | "vertical") => {
+    if (!ws || !activeSurface || activeSurface.layoutMode !== "bsp") return;
+    const sourcePaneId = activeSurface.activePaneId;
+    if (!sourcePaneId) return;
+
+    const sourceSessionId = resolveDuplicateSourceSessionId(
+      sourcePaneId,
+      findLeaf(activeSurface.layout, sourcePaneId)?.sessionId ?? null,
+      operationalEvents,
+    );
+    const targetSessionId = await cloneSessionForDuplication(sourcePaneId, sourceSessionId, {
+      workspaceId: ws.id,
+    });
+    const sourcePaneName = activeSurface.paneNames[sourcePaneId] ?? sourcePaneId;
+    const sourcePaneIcon = activeSurface.paneIcons[sourcePaneId] ?? "terminal";
+
+    splitActive(direction, `${sourcePaneName} Copy`, {
+      sessionId: targetSessionId ?? null,
+      paneIcon: sourcePaneIcon,
+    });
+
+    const duplicatedPaneId = useWorkspaceStore.getState().activePaneId();
+    if (!duplicatedPaneId) return;
+    const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(sourcePaneId, operationalEvents);
+    const fallbackBootstrapCommand = !targetSessionId
+      ? resolveDuplicateBootstrapCommand(sourcePaneId, operationalEvents)
+      : null;
+    const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+    if (bootstrapCommand) {
+      queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
+    }
+  };
 
   return (
     <div
@@ -62,7 +109,11 @@ export function SurfaceTabBar() {
       <div style={dividerStyle} />
 
       <SurfaceTabActions
+        layoutMode={activeLayoutMode}
         splitActive={splitActive}
+        duplicateSplit={(direction) => {
+          void duplicateSplit(direction);
+        }}
         applyPresetLayout={applyPresetLayout}
         equalizeLayout={equalizeLayout}
         toggleZoom={toggleZoom}
@@ -89,14 +140,42 @@ export function SurfaceTabBar() {
             approvalCount={approvals.filter((entry) => entry.surfaceId === sf.id && entry.status === "pending").length}
             paneCount={allLeafIds(sf.layout).length}
             onSelect={() => setActiveSurface(sf.id)}
-            onClose={() => closeSurface(sf.id)}
+            onClose={() => setPendingCloseSurface({ id: sf.id, name: sf.name })}
             onRename={(name) => renameSurface(sf.id, name)}
             onSetIcon={(icon) => setSurfaceIcon(sf.id, icon)}
           />
         ))}
       </div>
 
-      <SurfaceCreateButton createSurface={createSurface} />
+      <SurfaceCreateButton
+        layoutMode={activeLayoutMode}
+        createBspTerminal={() => {
+          if (activeLayoutMode === "bsp") {
+            splitActive("horizontal", "New Terminal");
+            return;
+          }
+          createSurface(undefined, { layoutMode: "bsp" });
+        }}
+        createCanvasSurface={() => createSurface(undefined, { layoutMode: "canvas" })}
+        createCanvasTerminal={() => {
+          if (activeLayoutMode !== "canvas" || !activeSurfaceId) return;
+          createCanvasPanel(activeSurfaceId);
+        }}
+      />
+
+      <AppConfirmDialog
+        open={Boolean(pendingCloseSurface)}
+        title={pendingCloseSurface ? `Close surface '${pendingCloseSurface.name}'?` : ""}
+        message="All terminals in this surface will be closed."
+        confirmLabel="Close Surface"
+        tone="danger"
+        onCancel={() => setPendingCloseSurface(null)}
+        onConfirm={() => {
+          if (!pendingCloseSurface) return;
+          closeSurface(pendingCloseSurface.id);
+          setPendingCloseSurface(null);
+        }}
+      />
     </div>
   );
 }

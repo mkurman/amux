@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAgentMissionStore } from "../lib/agentMissionStore";
 import { useAgentStore } from "../lib/agentStore";
 import { useKeybindStore } from "../lib/keybindStore";
+import { useNotificationStore } from "../lib/notificationStore";
 import { useWorkspaceStore } from "../lib/workspaceStore";
 
 type TitleMenuItem = {
@@ -37,8 +38,11 @@ export function TitleBar() {
   const toggleAgentPanel = useWorkspaceStore((s) => s.toggleAgentPanel);
   const toggleSystemMonitor = useWorkspaceStore((s) => s.toggleSystemMonitor);
   const toggleSearch = useWorkspaceStore((s) => s.toggleSearch);
+  const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
+  const notificationPanelOpen = useWorkspaceStore((s) => s.notificationPanelOpen);
   const approvals = useAgentMissionStore((s) => s.approvals);
   const cognitiveEvents = useAgentMissionStore((s) => s.cognitiveEvents);
+  const notifications = useNotificationStore((s) => s.notifications);
   const activeProvider = useAgentStore((s) => s.agentSettings.activeProvider);
   const bindings = useKeybindStore((s) => s.bindings);
   const [platform, setPlatform] = useState<string | null>(null);
@@ -50,6 +54,10 @@ export function TitleBar() {
     [approvals],
   );
   const traceCount = cognitiveEvents.length;
+  const unreadNotifications = useMemo(
+    () => notifications.filter((entry) => !entry.isRead).length,
+    [notifications],
+  );
 
   const shortcutFor = useCallback(
     (action: string): string | undefined => bindings.find((binding) => binding.action === action)?.combo,
@@ -87,6 +95,7 @@ export function TitleBar() {
       label: "Panels",
       items: [
         { id: "mission", label: "Mission Console", shortcut: shortcutFor("toggleAgentPanel"), tone: "agent", onSelect: toggleAgentPanel },
+        { id: "notifications", label: "Notifications", shortcut: shortcutFor("toggleNotifications"), onSelect: toggleNotificationPanel },
         { id: "monitor", label: "System Monitor", shortcut: shortcutFor("toggleSystemMonitor"), onSelect: toggleSystemMonitor },
         { id: "files", label: "File Manager", shortcut: shortcutFor("toggleFileManager"), onSelect: toggleFileManager },
         { id: "vault", label: "Session Vault", shortcut: shortcutFor("toggleSessionVault"), onSelect: toggleSessionVault },
@@ -115,6 +124,7 @@ export function TitleBar() {
     toggleAgentPanel,
     toggleCommandHistory,
     toggleCommandLog,
+    toggleNotificationPanel,
     toggleSnippets,
 
     toggleCommandPalette,
@@ -322,7 +332,52 @@ export function TitleBar() {
         </div>
       )}
 
-      <div style={{ display: "flex", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+        <button
+          type="button"
+          onClick={toggleNotificationPanel}
+          title={unreadNotifications > 0 ? `${unreadNotifications} unread notification(s)` : "Open notifications"}
+          style={{
+            border: "1px solid",
+            borderColor: unreadNotifications > 0 ? "var(--approval-border)" : "var(--glass-border)",
+            background: notificationPanelOpen
+              ? "var(--mission-soft)"
+              : unreadNotifications > 0
+                ? "var(--approval-soft)"
+                : "transparent",
+            color: unreadNotifications > 0 ? "var(--approval)" : "var(--text-secondary)",
+            borderRadius: "var(--radius-md)",
+            height: 28,
+            minWidth: unreadNotifications > 0 ? 40 : 32,
+            padding: "0 8px",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            fontSize: "var(--text-xs)",
+            fontWeight: 700,
+            cursor: "pointer",
+            position: "relative",
+          }}
+        >
+          <span style={{ letterSpacing: "0.06em" }}>NTF</span>
+          {unreadNotifications > 0 ? (
+            <span
+              style={{
+                minWidth: 16,
+                lineHeight: "16px",
+                padding: "0 4px",
+                borderRadius: "var(--radius-full)",
+                background: "var(--approval)",
+                color: "var(--bg-primary)",
+                fontSize: 10,
+                fontWeight: 800,
+              }}
+            >
+              {unreadNotifications > 99 ? "99+" : unreadNotifications}
+            </span>
+          ) : null}
+        </button>
         <WindowButton label="─" onClick={() => amux.windowMinimize()} />
         <WindowButton label={maximized ? "❐" : "□"} onClick={() => amux.windowMaximize()} />
         <WindowButton label="✕" onClick={() => amux.windowClose()} isClose />

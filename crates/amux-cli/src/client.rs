@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
 use amux_protocol::{
-    ApprovalDecision, ApprovalPayload, ClientMessage, AmuxCodec, DaemonMessage,
-    HistorySearchHit, ManagedCommandRequest, ManagedCommandSource, SecurityLevel, SessionInfo, SnapshotInfo,
+    AmuxCodec, ApprovalDecision, ApprovalPayload, ClientMessage, DaemonMessage, HistorySearchHit,
+    ManagedCommandRequest, ManagedCommandSource, SecurityLevel, SessionInfo, SnapshotInfo,
     SymbolMatch,
 };
+use anyhow::{Context, Result};
 use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -15,8 +15,13 @@ const BASE64_ENGINE: base64::engine::GeneralPurpose = base64::engine::general_pu
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum BridgeCommand {
-    Input { data: String },
-    Resize { cols: u16, rows: u16 },
+    Input {
+        data: String,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     ExecuteManaged {
         command: String,
         rationale: String,
@@ -27,12 +32,29 @@ enum BridgeCommand {
         language_hint: Option<String>,
         source: Option<String>,
     },
-    ApprovalDecision { approval_id: String, decision: String },
-    SearchHistory { query: String, limit: Option<usize> },
-    GenerateSkill { query: Option<String>, title: Option<String> },
-    FindSymbol { workspace_root: String, symbol: String, limit: Option<usize> },
-    ListSnapshots { workspace_id: Option<String> },
-    RestoreSnapshot { snapshot_id: String },
+    ApprovalDecision {
+        approval_id: String,
+        decision: String,
+    },
+    SearchHistory {
+        query: String,
+        limit: Option<usize>,
+    },
+    GenerateSkill {
+        query: Option<String>,
+        title: Option<String>,
+    },
+    FindSymbol {
+        workspace_root: String,
+        symbol: String,
+        limit: Option<usize>,
+    },
+    ListSnapshots {
+        workspace_id: Option<String>,
+    },
+    RestoreSnapshot {
+        snapshot_id: String,
+    },
     Shutdown,
     KillSession,
 }
@@ -40,14 +62,42 @@ enum BridgeCommand {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum BridgeEvent {
-    Ready { session_id: String },
-    Output { session_id: String, data: String },
-    CommandStarted { session_id: String, command_b64: String },
-    CommandFinished { session_id: String, exit_code: Option<i32> },
-    ManagedQueued { session_id: String, execution_id: String, position: usize, snapshot: Option<SnapshotInfo> },
-    ApprovalRequired { session_id: String, approval: ApprovalPayload },
-    ApprovalResolved { session_id: String, approval_id: String, decision: ApprovalDecision },
-    ManagedStarted { session_id: String, execution_id: String, command: String, source: ManagedCommandSource },
+    Ready {
+        session_id: String,
+    },
+    Output {
+        session_id: String,
+        data: String,
+    },
+    CommandStarted {
+        session_id: String,
+        command_b64: String,
+    },
+    CommandFinished {
+        session_id: String,
+        exit_code: Option<i32>,
+    },
+    ManagedQueued {
+        session_id: String,
+        execution_id: String,
+        position: usize,
+        snapshot: Option<SnapshotInfo>,
+    },
+    ApprovalRequired {
+        session_id: String,
+        approval: ApprovalPayload,
+    },
+    ApprovalResolved {
+        session_id: String,
+        approval_id: String,
+        decision: ApprovalDecision,
+    },
+    ManagedStarted {
+        session_id: String,
+        execution_id: String,
+        command: String,
+        source: ManagedCommandSource,
+    },
     ManagedFinished {
         session_id: String,
         execution_id: String,
@@ -56,14 +106,39 @@ enum BridgeEvent {
         duration_ms: Option<u64>,
         snapshot: Option<SnapshotInfo>,
     },
-    ManagedRejected { session_id: String, execution_id: Option<String>, message: String },
-    HistorySearchResult { query: String, summary: String, hits: Vec<HistorySearchHit> },
-    SkillGenerated { title: String, path: String },
-    SymbolSearchResult { symbol: String, matches: Vec<SymbolMatch> },
-    SnapshotList { snapshots: Vec<SnapshotInfo> },
-    SnapshotRestored { snapshot_id: String, ok: bool, message: String },
-    SessionExited { session_id: String, exit_code: Option<i32> },
-    Error { message: String },
+    ManagedRejected {
+        session_id: String,
+        execution_id: Option<String>,
+        message: String,
+    },
+    HistorySearchResult {
+        query: String,
+        summary: String,
+        hits: Vec<HistorySearchHit>,
+    },
+    SkillGenerated {
+        title: String,
+        path: String,
+    },
+    SymbolSearchResult {
+        symbol: String,
+        matches: Vec<SymbolMatch>,
+    },
+    SnapshotList {
+        snapshots: Vec<SnapshotInfo>,
+    },
+    SnapshotRestored {
+        snapshot_id: String,
+        ok: bool,
+        message: String,
+    },
+    SessionExited {
+        session_id: String,
+        exit_code: Option<i32>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 fn emit_bridge_event(event: BridgeEvent) -> Result<()> {
@@ -72,12 +147,11 @@ fn emit_bridge_event(event: BridgeEvent) -> Result<()> {
 }
 
 /// Connect to the daemon and return a framed stream.
-async fn connect() -> Result<Framed<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin, AmuxCodec>>
-{
+async fn connect(
+) -> Result<Framed<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin, AmuxCodec>> {
     #[cfg(unix)]
     {
-        let runtime_dir =
-            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let path = std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock");
         let stream = tokio::net::UnixStream::connect(&path)
             .await
@@ -137,6 +211,28 @@ pub async fn spawn_session(
     .await?
     {
         DaemonMessage::SessionSpawned { id } => Ok(id.to_string()),
+        DaemonMessage::Error { message } => anyhow::bail!("daemon error: {message}"),
+        other => anyhow::bail!("unexpected response: {other:?}"),
+    }
+}
+
+pub async fn clone_session(
+    source_id: &str,
+    workspace_id: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<String> {
+    let source_uuid = source_id.parse().context("invalid source session ID")?;
+    match roundtrip(ClientMessage::CloneSession {
+        source_id: source_uuid,
+        workspace_id,
+        cols,
+        rows,
+        replay_scrollback: true,
+    })
+    .await?
+    {
+        DaemonMessage::SessionCloned { id, .. } => Ok(id.to_string()),
         DaemonMessage::Error { message } => anyhow::bail!("daemon error: {message}"),
         other => anyhow::bail!("unexpected response: {other:?}"),
     }
@@ -217,17 +313,43 @@ pub async fn run_bridge(
             Ok(attached_id) => attached_id,
             Err(error) if is_missing_session_error(&error) => {
                 tracing::warn!(requested_session = %id, error = %error, "saved session missing; spawning replacement session");
-                spawn_bridge_session(&mut framed, shell.clone(), cwd.clone(), workspace.clone(), cols, rows).await?
+                spawn_bridge_session(
+                    &mut framed,
+                    shell.clone(),
+                    cwd.clone(),
+                    workspace.clone(),
+                    cols,
+                    rows,
+                )
+                .await?
             }
             Err(error) => return Err(error),
         }
     } else {
-        spawn_bridge_session(&mut framed, shell.clone(), cwd.clone(), workspace.clone(), cols, rows).await?
+        spawn_bridge_session(
+            &mut framed,
+            shell.clone(),
+            cwd.clone(),
+            workspace.clone(),
+            cols,
+            rows,
+        )
+        .await?
     };
 
     emit_bridge_event(BridgeEvent::Ready {
         session_id: session_id.to_string(),
     })?;
+
+    // Replay recent daemon scrollback so renderer reloads can reconstruct terminal state
+    // even when the Electron-side bridge process is recreated.
+    framed
+        .send(ClientMessage::GetScrollback {
+            id: session_id,
+            max_lines: None,
+        })
+        .await
+        .ok();
 
     let mut stdin_lines = BufReader::new(tokio::io::stdin()).lines();
 
@@ -438,6 +560,14 @@ pub async fn run_bridge(
                     Some(Ok(DaemonMessage::SnapshotRestored { snapshot_id, ok, message })) => {
                         emit_bridge_event(BridgeEvent::SnapshotRestored { snapshot_id, ok, message })?;
                     }
+                    Some(Ok(DaemonMessage::Scrollback { id, data })) if id == session_id => {
+                        if !data.is_empty() {
+                            emit_bridge_event(BridgeEvent::Output {
+                                session_id: id.to_string(),
+                                data: BASE64_ENGINE.encode(data),
+                            })?;
+                        }
+                    }
                     Some(Ok(DaemonMessage::SessionExited { id, exit_code })) if id == session_id => {
                         emit_bridge_event(BridgeEvent::SessionExited {
                             session_id: id.to_string(),
@@ -497,17 +627,17 @@ async fn spawn_bridge_session(
     cols: u16,
     rows: u16,
 ) -> Result<uuid::Uuid> {
-        framed
-            .send(ClientMessage::SpawnSession {
-                shell,
-                cwd,
-                env: None,
-                workspace_id: workspace,
-                cols,
-                rows,
-            })
-            .await
-            .context("failed to request session spawn")?;
+    framed
+        .send(ClientMessage::SpawnSession {
+            shell,
+            cwd,
+            env: None,
+            workspace_id: workspace,
+            cols,
+            rows,
+        })
+        .await
+        .context("failed to request session spawn")?;
 
     match framed.next().await {
         Some(Ok(DaemonMessage::SessionSpawned { id })) => Ok(id),

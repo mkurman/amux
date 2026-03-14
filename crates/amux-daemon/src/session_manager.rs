@@ -1,10 +1,10 @@
+use amux_protocol::{
+    ApprovalDecision, DaemonMessage, HistorySearchHit, ManagedCommandRequest, SessionId,
+    SessionInfo, SnapshotInfo, SymbolMatch, TelemetryLedgerStatus,
+};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::Result;
-use amux_protocol::{
-    ApprovalDecision, DaemonMessage, HistorySearchHit, ManagedCommandRequest,
-    SessionId, SessionInfo, SnapshotInfo, SymbolMatch, TelemetryLedgerStatus,
-};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
 
@@ -78,9 +78,65 @@ impl SessionManager {
         Ok((id, rx))
     }
 
+    /// Clone an existing session into a new independent PTY.
+    pub async fn clone_session(
+        &self,
+        source_id: SessionId,
+        workspace_id: Option<String>,
+        cols: Option<u16>,
+        rows: Option<u16>,
+        replay_scrollback: bool,
+    ) -> Result<(SessionId, broadcast::Receiver<DaemonMessage>)> {
+        let source = self
+            .sessions
+            .read()
+            .await
+            .get(&source_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("session not found: {source_id}"))?;
+
+        let (shell, cwd, source_workspace_id, source_cols, source_rows, replay_bytes) = {
+            let source = source.lock().await;
+            (
+                source.shell().map(ToOwned::to_owned),
+                source.resolved_cwd(),
+                source.workspace_id().map(ToOwned::to_owned),
+                source.cols(),
+                source.rows(),
+                if replay_scrollback {
+                    source.scrollback(None)
+                } else {
+                    Vec::new()
+                },
+            )
+        };
+
+        let target_workspace_id = workspace_id.or(source_workspace_id);
+        let (id, rx) = self
+            .spawn(
+                shell,
+                cwd,
+                target_workspace_id,
+                None,
+                cols.unwrap_or(source_cols),
+                rows.unwrap_or(source_rows),
+            )
+            .await?;
+
+        if replay_scrollback && !replay_bytes.is_empty() {
+            if let Some(cloned_session) = self.sessions.read().await.get(&id).cloned() {
+                cloned_session.lock().await.preload_output(&replay_bytes);
+            }
+        }
+
+        tracing::info!(%source_id, %id, "session cloned");
+        Ok((id, rx))
+    }
+
     /// Send raw input bytes to a session's PTY stdin.
     pub async fn write_input(&self, id: SessionId, data: &[u8]) -> Result<()> {
-        let session = self.sessions
+        let session = self
+            .sessions
             .read()
             .await
             .get(&id)
@@ -92,7 +148,8 @@ impl SessionManager {
 
     /// Resize a session's PTY.
     pub async fn resize(&self, id: SessionId, cols: u16, rows: u16) -> Result<()> {
-        let session = self.sessions
+        let session = self
+            .sessions
             .read()
             .await
             .get(&id)
@@ -176,7 +233,8 @@ impl SessionManager {
 
     /// Get scrollback buffer (last N lines of raw output).
     pub async fn get_scrollback(&self, id: SessionId, max_lines: Option<usize>) -> Result<Vec<u8>> {
-        let session = self.sessions
+        let session = self
+            .sessions
             .read()
             .await
             .get(&id)
@@ -187,7 +245,11 @@ impl SessionManager {
     }
 
     /// Get sanitised (ANSI-stripped) recent output for AI analysis.
-    pub async fn get_analysis_text(&self, id: SessionId, max_lines: Option<usize>) -> Result<String> {
+    pub async fn get_analysis_text(
+        &self,
+        id: SessionId,
+        max_lines: Option<usize>,
+    ) -> Result<String> {
         let raw = self.get_scrollback(id, max_lines).await?;
         let stripped = strip_ansi_escapes::strip(&raw);
         Ok(String::from_utf8_lossy(&stripped).into_owned())
@@ -241,10 +303,11 @@ impl SessionManager {
                         "pre-execution checkpoint",
                     )?
                 };
-                let position = session
-                    .lock()
-                    .await
-                    .queue_managed_command(execution_id.clone(), request, snapshot.clone())?;
+                let position = session.lock().await.queue_managed_command(
+                    execution_id.clone(),
+                    request,
+                    snapshot.clone(),
+                )?;
                 Ok(DaemonMessage::ManagedCommandQueued {
                     id,
                     execution_id,
@@ -326,15 +389,28 @@ impl SessionManager {
         Ok(responses)
     }
 
-    pub fn search_history(&self, query: &str, limit: usize) -> Result<(String, Vec<HistorySearchHit>)> {
+    pub fn search_history(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<(String, Vec<HistorySearchHit>)> {
         self.history.search(query, limit)
     }
 
-    pub fn generate_skill(&self, query: Option<&str>, title: Option<&str>) -> Result<(String, String)> {
+    pub fn generate_skill(
+        &self,
+        query: Option<&str>,
+        title: Option<&str>,
+    ) -> Result<(String, String)> {
         self.history.generate_skill(query, title)
     }
 
-    pub fn find_symbol_matches(&self, workspace_root: &str, symbol: &str, limit: usize) -> Vec<SymbolMatch> {
+    pub fn find_symbol_matches(
+        &self,
+        workspace_root: &str,
+        symbol: &str,
+        limit: usize,
+    ) -> Vec<SymbolMatch> {
         find_symbol(workspace_root, symbol, limit)
     }
 
@@ -362,13 +438,8 @@ impl SessionManager {
     }
 
     async fn snapshot_saved_sessions(&self) -> Vec<SavedSession> {
-        let sessions: Vec<Arc<Mutex<PtySession>>> = self
-            .sessions
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect();
+        let sessions: Vec<Arc<Mutex<PtySession>>> =
+            self.sessions.read().await.values().cloned().collect();
 
         let mut saved = Vec::with_capacity(sessions.len());
         for session in sessions {

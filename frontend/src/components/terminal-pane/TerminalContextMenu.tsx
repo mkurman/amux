@@ -28,14 +28,14 @@ export function TerminalContextMenu({
         <div
             onPointerDown={(event) => event.stopPropagation()}
             style={{
-                position: "fixed",
+                position: "absolute",
                 top: y,
                 left: x,
                 width: 220,
-                background: "#141420",
-                border: "1px solid #2a2a3c",
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-color)",
+                boxShadow: "var(--shadow-sm)",
                 borderRadius: 0,
-                boxShadow: "none",
                 padding: 6,
                 zIndex: 4000,
             }}
@@ -48,7 +48,7 @@ export function TerminalContextMenu({
                             style={{
                                 height: 1,
                                 margin: "6px 4px",
-                                background: "#2a2a3c",
+                                background: "var(--bg-secondary)",
                             }}
                         />
                     );
@@ -73,12 +73,12 @@ export function TerminalContextMenu({
                             alignItems: "center",
                             borderRadius: 0,
                             padding: "8px 10px",
-                            fontSize: 12,
+                            fontSize: 9,
                             cursor: item.disabled ? "not-allowed" : "pointer",
                         }}
                     >
                         <span>{item.label}</span>
-                        <span style={{ color: "#8f8fa8", fontSize: 11 }}>{item.shortcut ?? ""}</span>
+                        <span style={{ color: "#8f8fa8", fontSize: 9 }}>{item.shortcut ?? ""}</span>
                     </button>
                 );
             })}

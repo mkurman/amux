@@ -14,6 +14,7 @@ export function StatusBar() {
   const surface = useWorkspaceStore((s) => s.activeSurface());
   const zoomedPaneId = useWorkspaceStore((s) => s.zoomedPaneId);
   const activePaneId = useWorkspaceStore((s) => s.activePaneId());
+  const toggleNotificationPanel = useWorkspaceStore((s) => s.toggleNotificationPanel);
   const notifications = useNotificationStore((s) => s.notifications);
   const themeName = useSettingsStore((s) => s.settings.themeName);
   const sandboxEnabled = useSettingsStore((s) => s.settings.sandboxEnabled);
@@ -125,6 +126,23 @@ export function StatusBar() {
         <div style={dividerStyle} />
 
         <InlineSystemMonitor />
+
+        <button
+          type="button"
+          onClick={toggleNotificationPanel}
+          title="Open notifications"
+          style={{
+            border: "1px solid var(--glass-border)",
+            background: unreadCount > 0 ? "var(--approval-soft)" : "transparent",
+            color: unreadCount > 0 ? "var(--warning)" : "var(--text-secondary)",
+            fontSize: "var(--text-xs)",
+            fontWeight: 700,
+            padding: "3px 8px",
+            cursor: "pointer",
+          }}
+        >
+          Alerts {unreadCount > 0 ? `(${unreadCount})` : ""}
+        </button>
 
         {unreadCount > 0 && (
           <span
