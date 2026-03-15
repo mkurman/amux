@@ -157,6 +157,9 @@ export interface AgentSettings {
   contextBudgetTokens: number;
   compactThresholdPercent: number;
   keepRecentOnCompaction: number;
+
+  // Agent backend: "daemon" runs LLM in tamux-daemon, "legacy" uses frontend
+  agentBackend: "daemon" | "legacy";
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -208,6 +211,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   contextBudgetTokens: 100000,
   compactThresholdPercent: 80,
   keepRecentOnCompaction: 10,
+
+  agentBackend: "daemon",
 };
 
 // ---------------------------------------------------------------------------
@@ -238,7 +243,7 @@ export interface AgentState {
     threadId: string,
     content: string,
     streaming?: boolean,
-    meta?: Partial<Pick<AgentMessage, "inputTokens" | "outputTokens" | "totalTokens" | "reasoning" | "reasoningTokens" | "audioTokens" | "videoTokens" | "cost" | "tps" | "toolCalls">>
+    meta?: Partial<Pick<AgentMessage, "inputTokens" | "outputTokens" | "totalTokens" | "reasoning" | "reasoningTokens" | "audioTokens" | "videoTokens" | "cost" | "tps" | "toolCalls" | "provider" | "model">>
   ) => void;
   getThreadMessages: (threadId: string) => AgentMessage[];
 
@@ -450,6 +455,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         cost: meta?.cost ?? last.cost,
         tps: meta?.tps ?? last.tps,
         toolCalls: meta?.toolCalls ?? last.toolCalls,
+        provider: meta?.provider ?? last.provider,
+        model: meta?.model ?? last.model,
       };
       const updated = [...msgs.slice(0, -1), updatedLast];
       const tokenDeltaIn = nextInputTokens - last.inputTokens;

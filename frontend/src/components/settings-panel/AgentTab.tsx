@@ -35,6 +35,11 @@ export function AgentTab({
                 <SettingRow label="Enable Agent">
                     <Toggle value={settings.enabled} onChange={(value) => updateSetting("enabled", value)} />
                 </SettingRow>
+                <SettingRow label="Agent Backend">
+                    <SelectInput value={settings.agentBackend}
+                        options={["daemon", "legacy"]}
+                        onChange={(value) => updateSetting("agentBackend", value as "daemon" | "legacy")} />
+                </SettingRow>
                 <SettingRow label="Agent Name">
                     <TextInput value={settings.agentName} onChange={(value) => updateSetting("agentName", value)} />
                 </SettingRow>

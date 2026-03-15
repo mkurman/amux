@@ -32,6 +32,8 @@ tree-sitter = "0.22"
 tree-sitter-bash = "0.21"
 walkdir = "2"
 base64 = "0.22"
+reqwest = { workspace = true }
+tokio-stream = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 interprocess = { version = "2", features = ["tokio"] }

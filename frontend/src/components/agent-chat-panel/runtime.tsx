@@ -14,6 +14,7 @@ import { AITrainingView } from "./AITrainingView";
 import { ChatView } from "./ChatView";
 import { CodingAgentsView } from "./CodingAgentsView";
 import { ContextView } from "./ContextView";
+import { TasksView } from "./TasksView";
 import { MetricRibbon, SectionTitle, iconButtonStyle } from "./shared";
 import { ThreadList } from "./ThreadList";
 import { TraceView } from "./TraceView";
@@ -21,7 +22,7 @@ import { UsageView } from "./UsageView";
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
-export type AgentChatPanelView = "threads" | "chat" | "trace" | "usage" | "context" | "graph" | "coding-agents" | "ai-training";
+export type AgentChatPanelView = "threads" | "chat" | "trace" | "usage" | "context" | "graph" | "coding-agents" | "ai-training" | "tasks";
 
 type AgentStoreState = ReturnType<typeof useAgentStore.getState>;
 type AgentMissionStoreState = ReturnType<typeof useAgentMissionStore.getState>;
@@ -119,6 +120,262 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const abortRef = useRef<AbortController | null>(null);
+    // Daemon mode: track the daemon's thread ID (for conversation continuity)
+    // and which local frontend thread should receive daemon events.
+    const daemonThreadIdRef = useRef<string | null>(null);
+    const daemonLocalThreadRef = useRef<string | null>(null);
+    // Buffer gateway messages that arrive before thread_created
+    const pendingGatewayMessagesRef = useRef<Array<{ role: "user"; content: string; inputTokens: number; outputTokens: number; totalTokens: number; isCompactionSummary: boolean }>>([]);
+
+    // Sync provider config to daemon whenever settings change in daemon mode
+    useEffect(() => {
+        if (agentSettings.agentBackend !== "daemon") return;
+        const amux = (window as any).tamux ?? (window as any).amux;
+        if (!amux?.agentSetConfig) return;
+
+        const providerKey = agentSettings.activeProvider;
+        const pc = agentSettings[providerKey] as { baseUrl: string; model: string; apiKey: string } | undefined;
+        if (!pc?.baseUrl) return;
+
+        const appSettings = useSettingsStore.getState().settings;
+        void amux.agentSetConfig({
+            enabled: true,
+            provider: providerKey,
+            base_url: pc.baseUrl,
+            model: pc.model,
+            api_key: pc.apiKey,
+            system_prompt: agentSettings.systemPrompt,
+            max_tool_loops: agentSettings.maxToolLoops,
+            tools: {
+                bash: agentSettings.enableBashTool,
+                web_search: agentSettings.enableWebSearchTool,
+                web_browse: agentSettings.enableWebBrowsingTool,
+                vision: agentSettings.enableVisionTool,
+                gateway_messaging: true,
+                file_operations: true,
+                system_info: true,
+            },
+            gateway: {
+                enabled: appSettings.gatewayEnabled,
+                slack_token: appSettings.slackToken || "",
+                telegram_token: appSettings.telegramToken || "",
+                discord_token: appSettings.discordToken || "",
+                command_prefix: appSettings.gatewayCommandPrefix || "!tamux",
+            },
+        });
+    }, [agentSettings]);
+
+    // Subscribe to daemon agent events when in daemon mode
+    useEffect(() => {
+        if (agentSettings.agentBackend !== "daemon") return;
+
+        const amux = (window as any).tamux ?? (window as any).amux;
+        if (!amux?.onAgentEvent) return;
+
+        const unsubscribe = amux.onAgentEvent((event: any) => {
+            if (!event?.type) return;
+
+            // Route all daemon events to the local frontend thread
+            const tid = daemonLocalThreadRef.current;
+
+            switch (event.type) {
+                case "delta": {
+                    if (!tid) break;
+                    const msgs = useAgentStore.getState().getThreadMessages(tid);
+                    const last = msgs[msgs.length - 1];
+                    if (last?.role === "assistant" && last.isStreaming) {
+                        updateLastAssistantMessage(tid, (last.content || "") + (event.content || ""), true);
+                    }
+                    break;
+                }
+                case "done": {
+                    if (!tid) break;
+                    const msgs2 = useAgentStore.getState().getThreadMessages(tid);
+                    const last2 = msgs2[msgs2.length - 1];
+                    if (last2?.role === "assistant") {
+                        updateLastAssistantMessage(tid, last2.content || "(empty)", false, {
+                            inputTokens: event.input_tokens ?? 0,
+                            outputTokens: event.output_tokens ?? 0,
+                            totalTokens: (event.input_tokens ?? 0) + (event.output_tokens ?? 0),
+                            provider: event.provider || undefined,
+                            model: event.model || undefined,
+                        });
+                    }
+                    break;
+                }
+                case "tool_call": {
+                    if (!tid) break;
+                    // Finalize the current streaming assistant message before adding tool call
+                    const tcMsgs = useAgentStore.getState().getThreadMessages(tid);
+                    const tcLast = tcMsgs[tcMsgs.length - 1];
+                    if (tcLast?.role === "assistant" && tcLast.isStreaming) {
+                        updateLastAssistantMessage(tid, tcLast.content || "Calling tools...", false);
+                    }
+                    addMessage(tid, {
+                        role: "tool",
+                        content: "",
+                        toolName: event.name,
+                        toolCallId: event.call_id,
+                        toolArguments: event.arguments,
+                        toolStatus: "requested",
+                        inputTokens: 0,
+                        outputTokens: 0,
+                        totalTokens: 0,
+                        isCompactionSummary: false,
+                    });
+                    break;
+                }
+                case "tool_result": {
+                    if (!tid) break;
+                    addMessage(tid, {
+                        role: "tool",
+                        content: event.content,
+                        toolName: event.name,
+                        toolCallId: event.call_id,
+                        toolStatus: event.is_error ? "error" : "done",
+                        inputTokens: 0,
+                        outputTokens: 0,
+                        totalTokens: 0,
+                        isCompactionSummary: false,
+                    });
+                    // Add new streaming assistant message for the next LLM turn
+                    addMessage(tid, {
+                        role: "assistant",
+                        content: "",
+                        provider: "daemon",
+                        model: "daemon",
+                        inputTokens: 0,
+                        outputTokens: 0,
+                        totalTokens: 0,
+                        isCompactionSummary: false,
+                        isStreaming: true,
+                    });
+                    break;
+                }
+                case "error": {
+                    if (!tid) break;
+                    updateLastAssistantMessage(tid, `Error: ${event.message}`, false);
+                    break;
+                }
+                case "thread_created": {
+                    if (event.thread_id) {
+                        daemonThreadIdRef.current = event.thread_id;
+
+                        // Auto-create a local thread if none exists (e.g. gateway message)
+                        if (!daemonLocalThreadRef.current) {
+                            const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+                            const surfaceId = useWorkspaceStore.getState().activeSurface()?.id ?? null;
+                            const paneId = useWorkspaceStore.getState().activePaneId();
+                            const localId = createThread({
+                                workspaceId,
+                                surfaceId,
+                                paneId,
+                                title: event.title || "Gateway conversation",
+                            });
+                            daemonLocalThreadRef.current = localId;
+                            setActiveThread(localId);
+                            setView("chat");
+
+                            // Flush any buffered gateway messages
+                            for (const buffered of pendingGatewayMessagesRef.current) {
+                                addMessage(localId, buffered);
+                            }
+                            pendingGatewayMessagesRef.current = [];
+
+                            // Add streaming assistant placeholder
+                            addMessage(localId, {
+                                role: "assistant",
+                                content: "",
+                                provider: "daemon",
+                                model: "daemon",
+                                inputTokens: 0,
+                                outputTokens: 0,
+                                totalTokens: 0,
+                                isCompactionSummary: false,
+                                isStreaming: true,
+                            });
+                        }
+                    }
+                    break;
+                }
+                case "workspace_command": {
+                    // Execute workspace mutation on the frontend
+                    const cmd = event.command;
+                    const cmdArgs = event.args || {};
+                    const ws = useWorkspaceStore.getState();
+                    try {
+                        switch (cmd) {
+                            case "create_workspace": ws.createWorkspace(cmdArgs.name); break;
+                            case "set_active_workspace": {
+                                const w = ws.workspaces.find((x: any) => x.id === cmdArgs.workspace || x.name === cmdArgs.workspace);
+                                if (w) ws.setActiveWorkspace(w.id);
+                                break;
+                            }
+                            case "create_surface": ws.createSurface(undefined, undefined); break;
+                            case "set_active_surface": {
+                                const aw = ws.activeWorkspace();
+                                if (aw) {
+                                    const s = aw.surfaces.find((x: any) => x.id === cmdArgs.surface || x.name === cmdArgs.surface);
+                                    if (s) ws.setActiveSurface(s.id);
+                                }
+                                break;
+                            }
+                            case "split_pane": ws.splitActive(cmdArgs.direction === "vertical" ? "vertical" : "horizontal"); break;
+                            case "rename_pane": {
+                                const paneId = cmdArgs.pane || ws.activePaneId();
+                                if (paneId) ws.setPaneName(paneId, cmdArgs.name);
+                                break;
+                            }
+                            case "set_layout_preset": break; // TODO
+                            case "equalize_layout": break; // TODO
+                            case "create_snippet": {
+                                const snippetStore = useSnippetStore.getState();
+                                snippetStore.addSnippet({ name: cmdArgs.name, content: cmdArgs.content, category: cmdArgs.category, description: cmdArgs.description, tags: cmdArgs.tags, owner: "assistant" });
+                                break;
+                            }
+                            case "run_snippet": break; // TODO
+                        }
+                    } catch (e: any) {
+                        console.warn("workspace command failed:", cmd, e);
+                    }
+                    break;
+                }
+                case "gateway_incoming": {
+                    const gwMsg = {
+                        role: "user" as const,
+                        content: `[${event.platform} — ${event.sender}]: ${event.content}`,
+                        inputTokens: 0,
+                        outputTokens: 0,
+                        totalTokens: 0,
+                        isCompactionSummary: false,
+                    };
+
+                    const inTid = daemonLocalThreadRef.current;
+                    if (inTid) {
+                        // Thread exists — add message directly + streaming placeholder
+                        addMessage(inTid, gwMsg);
+                        addMessage(inTid, {
+                            role: "assistant",
+                            content: "",
+                            provider: "daemon",
+                            model: "daemon",
+                            inputTokens: 0,
+                            outputTokens: 0,
+                            totalTokens: 0,
+                            isCompactionSummary: false,
+                            isStreaming: true,
+                        });
+                    } else {
+                        // Thread not yet created — buffer for thread_created handler
+                        pendingGatewayMessagesRef.current.push(gwMsg);
+                    }
+                    break;
+                }
+            }
+        });
+
+        return unsubscribe;
+    }, [agentSettings.agentBackend, addMessage, updateLastAssistantMessage, setActiveThread]);
 
     const activeThread = threads.find((thread) => thread.id === activeThreadId);
     const messages = storeMessages ?? EMPTY_MESSAGES;
@@ -190,6 +447,63 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
     function sendMessage(text: string) {
         if (!text) return;
 
+        // Daemon mode: send to daemon agent engine via IPC
+        if (agentSettings.agentBackend === "daemon") {
+            const amux = (window as any).tamux ?? (window as any).amux;
+            if (!amux?.agentSendMessage) {
+                sendMessageLegacy(text);
+                return;
+            }
+
+            // Use the daemon's thread ID for conversation continuity.
+            // The daemon is the source of truth — we pass its ID so it
+            // appends to the same thread across messages.
+            const daemonTid = daemonThreadIdRef.current;
+
+            // Ensure a frontend thread exists for rendering
+            let threadId = activeThreadId;
+            if (!threadId) {
+                const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
+                const surfaceId = useWorkspaceStore.getState().activeSurface()?.id ?? null;
+                const paneId = useWorkspaceStore.getState().activePaneId();
+                threadId = createThread({ workspaceId, surfaceId, paneId, title: text.slice(0, 50) });
+                setView("chat");
+            }
+
+            addMessage(threadId, {
+                role: "user",
+                content: text,
+                inputTokens: 0,
+                outputTokens: 0,
+                totalTokens: 0,
+                isCompactionSummary: false,
+            });
+
+            addMessage(threadId, {
+                role: "assistant",
+                content: "",
+                provider: agentSettings.activeProvider,
+                model: (agentSettings[agentSettings.activeProvider] as any)?.model || "unknown",
+                inputTokens: 0,
+                outputTokens: 0,
+                totalTokens: 0,
+                isCompactionSummary: false,
+                isStreaming: true,
+            });
+
+            // Track which local thread receives daemon events
+            daemonLocalThreadRef.current = threadId;
+
+            // Send daemon's thread ID (null for first message → daemon creates thread)
+            void amux.agentSendMessage(daemonTid, text);
+            return;
+        }
+
+        // Legacy mode: run LLM in frontend
+        sendMessageLegacy(text);
+    }
+
+    function sendMessageLegacy(text: string) {
         let threadId = activeThreadId;
         if (!threadId) {
             const workspaceId = useWorkspaceStore.getState().activeWorkspaceId;
@@ -462,6 +776,7 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
         { id: "graph", label: "Graph", count: null },
         { id: "coding-agents", label: "Coding Agents", count: null },
         { id: "ai-training", label: "AI Training", count: null },
+        { id: "tasks", label: "Tasks", count: null },
     ] satisfies Array<{ id: AgentChatPanelView; label: string; count: number | null }>;
 
     const value = useMemo<AgentChatPanelRuntimeValue>(() => ({
@@ -711,6 +1026,7 @@ export function AgentChatPanelCurrentSurface() {
     if (view === "context") return <AgentChatPanelContextSurface />;
     if (view === "coding-agents") return <AgentChatPanelCodingAgentsSurface />;
     if (view === "ai-training") return <AgentChatPanelAITrainingSurface />;
+    if (view === "tasks") return <TasksView />;
     return <AgentChatPanelGraphSurface />;
 }
 

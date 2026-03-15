@@ -139,6 +139,59 @@ pub enum ClientMessage {
 
     /// Ping / health-check.
     Ping,
+
+    // -----------------------------------------------------------------------
+    // Agent engine
+    // -----------------------------------------------------------------------
+
+    /// Send a message to the agent (triggers an LLM turn with tool loop).
+    AgentSendMessage {
+        thread_id: Option<String>,
+        content: String,
+    },
+
+    /// Stop the current agent stream on a thread.
+    AgentStopStream { thread_id: String },
+
+    /// List all agent threads.
+    AgentListThreads,
+
+    /// Get a specific agent thread with full message history.
+    AgentGetThread { thread_id: String },
+
+    /// Delete an agent thread.
+    AgentDeleteThread { thread_id: String },
+
+    /// Add a task to the agent's task queue.
+    AgentAddTask {
+        title: String,
+        description: String,
+        priority: String,
+    },
+
+    /// Cancel a queued or running agent task.
+    AgentCancelTask { task_id: String },
+
+    /// List all agent tasks.
+    AgentListTasks,
+
+    /// Get current agent configuration.
+    AgentGetConfig,
+
+    /// Update agent configuration.
+    AgentSetConfig { config_json: String },
+
+    /// Get heartbeat check items.
+    AgentHeartbeatGetItems,
+
+    /// Set heartbeat check items.
+    AgentHeartbeatSetItems { items_json: String },
+
+    /// Subscribe to agent event broadcasts.
+    AgentSubscribe,
+
+    /// Unsubscribe from agent event broadcasts.
+    AgentUnsubscribe,
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +352,28 @@ pub enum DaemonMessage {
 
     /// Generic error.
     Error { message: String },
+
+    // -----------------------------------------------------------------------
+    // Agent engine responses
+    // -----------------------------------------------------------------------
+
+    /// Streamed agent event (delta, tool call, done, etc.).
+    AgentEvent { event_json: String },
+
+    /// Response to AgentListThreads.
+    AgentThreadList { threads_json: String },
+
+    /// Response to AgentGetThread.
+    AgentThreadDetail { thread_json: String },
+
+    /// Response to AgentListTasks.
+    AgentTaskList { tasks_json: String },
+
+    /// Response to AgentGetConfig.
+    AgentConfigResponse { config_json: String },
+
+    /// Response to AgentHeartbeatGetItems.
+    AgentHeartbeatItems { items_json: String },
 }
 
 // ---------------------------------------------------------------------------

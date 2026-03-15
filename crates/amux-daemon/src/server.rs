@@ -8,6 +8,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::broadcast;
 use tokio_util::codec::Framed;
 
+use crate::agent::AgentEngine;
 use crate::session_manager::SessionManager;
 
 /// Socket path / pipe name for IPC.
@@ -30,15 +31,32 @@ pub async fn run() -> Result<()> {
         }
     });
 
-    #[cfg(unix)]
-    {
-        run_unix(manager).await
+    // Start agent engine
+    let agent_config = crate::agent::load_config().unwrap_or_default();
+    let agent = AgentEngine::new(manager.clone(), agent_config);
+
+    // Hydrate persisted state (threads, tasks, heartbeat, memory)
+    if let Err(e) = agent.hydrate().await {
+        tracing::warn!("failed to hydrate agent engine: {e}");
     }
 
+    // Start background loop (tasks + heartbeat)
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let loop_agent = agent.clone();
+    tokio::spawn(async move {
+        loop_agent.run_loop(shutdown_rx).await;
+    });
+
+    #[cfg(unix)]
+    let result = run_unix(manager, agent.clone()).await;
+
     #[cfg(windows)]
-    {
-        run_windows(manager).await
-    }
+    let result = run_windows(manager, agent.clone()).await;
+
+    // Signal agent loop shutdown
+    let _ = shutdown_tx.send(true);
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -46,7 +64,7 @@ pub async fn run() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(unix)]
-async fn run_unix(manager: Arc<SessionManager>) -> Result<()> {
+async fn run_unix(manager: Arc<SessionManager>, agent: Arc<AgentEngine>) -> Result<()> {
     use tokio::net::UnixListener;
 
     let path = socket_path();
@@ -64,7 +82,7 @@ async fn run_unix(manager: Arc<SessionManager>) -> Result<()> {
     };
 
     tokio::select! {
-        _ = accept_loop_unix(listener, manager) => {}
+        _ = accept_loop_unix(listener, manager, agent) => {}
         _ = shutdown => {}
     }
 
@@ -74,13 +92,14 @@ async fn run_unix(manager: Arc<SessionManager>) -> Result<()> {
 }
 
 #[cfg(unix)]
-async fn accept_loop_unix(listener: tokio::net::UnixListener, manager: Arc<SessionManager>) {
+async fn accept_loop_unix(listener: tokio::net::UnixListener, manager: Arc<SessionManager>, agent: Arc<AgentEngine>) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
                 let manager = manager.clone();
+                let agent = agent.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, manager).await {
+                    if let Err(e) = handle_connection(stream, manager, agent).await {
                         tracing::error!(error = %e, "client connection error");
                     }
                 });
@@ -97,15 +116,15 @@ async fn accept_loop_unix(listener: tokio::net::UnixListener, manager: Arc<Sessi
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
-async fn run_windows(manager: Arc<SessionManager>) -> Result<()> {
+async fn run_windows(manager: Arc<SessionManager>, agent: Arc<AgentEngine>) -> Result<()> {
     let addr = amux_protocol::default_tcp_addr();
     tracing::info!(%addr, "daemon listening on TCP");
-    run_tcp_fallback(manager).await
+    run_tcp_fallback(manager, agent).await
 }
 
 /// TCP server used for Windows IPC.
 #[allow(dead_code)]
-async fn run_tcp_fallback(manager: Arc<SessionManager>) -> Result<()> {
+async fn run_tcp_fallback(manager: Arc<SessionManager>, agent: Arc<AgentEngine>) -> Result<()> {
     use tokio::net::TcpListener;
 
     let addr = amux_protocol::default_tcp_addr();
@@ -126,7 +145,7 @@ async fn run_tcp_fallback(manager: Arc<SessionManager>) -> Result<()> {
     };
 
     tokio::select! {
-        _ = accept_loop_tcp(listener, manager) => {}
+        _ = accept_loop_tcp(listener, manager, agent) => {}
         _ = shutdown => {}
     }
 
@@ -135,14 +154,15 @@ async fn run_tcp_fallback(manager: Arc<SessionManager>) -> Result<()> {
 }
 
 #[allow(dead_code)]
-async fn accept_loop_tcp(listener: tokio::net::TcpListener, manager: Arc<SessionManager>) {
+async fn accept_loop_tcp(listener: tokio::net::TcpListener, manager: Arc<SessionManager>, agent: Arc<AgentEngine>) {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
                 tracing::info!(%addr, "client connected");
                 let manager = manager.clone();
+                let agent = agent.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(stream, manager).await {
+                    if let Err(e) = handle_connection(stream, manager, agent).await {
                         tracing::error!(%addr, error = %e, "client connection error");
                     }
                 });
@@ -158,7 +178,7 @@ async fn accept_loop_tcp(listener: tokio::net::TcpListener, manager: Arc<Session
 // Connection handler — generic over any AsyncRead + AsyncWrite stream
 // ---------------------------------------------------------------------------
 
-async fn handle_connection<S>(stream: S, manager: Arc<SessionManager>) -> Result<()>
+async fn handle_connection<S>(stream: S, manager: Arc<SessionManager>, agent: Arc<AgentEngine>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -169,10 +189,32 @@ where
     let mut attached_rxs: Vec<(amux_protocol::SessionId, broadcast::Receiver<DaemonMessage>)> =
         Vec::new();
 
+    // Optional agent event subscription.
+    let mut agent_event_rx: Option<broadcast::Receiver<crate::agent::types::AgentEvent>> = None;
+
     loop {
+        // Drain agent events if subscribed.
+        if let Some(ref mut rx) = agent_event_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        if let Ok(json) = serde_json::to_string(&event) {
+                            framed.send(DaemonMessage::AgentEvent { event_json: json }).await?;
+                        }
+                    }
+                    Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "agent event broadcast lagged");
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+
         // We need to select between: incoming client messages and output from attached sessions.
-        let msg = if attached_rxs.is_empty() {
-            // No attached sessions — just wait for client input.
+        let has_subscriptions = !attached_rxs.is_empty() || agent_event_rx.is_some();
+        let msg = if !has_subscriptions {
+            // No attached sessions or agent subscription — just wait for client input.
             match framed.next().await {
                 Some(Ok(msg)) => Some(msg),
                 Some(Err(e)) => return Err(e.into()),
@@ -580,6 +622,98 @@ where
                                 .await?;
                         }
                     }
+                }
+
+                // -----------------------------------------------------------
+                // Agent engine messages
+                // -----------------------------------------------------------
+
+                ClientMessage::AgentSendMessage { thread_id, content } => {
+                    let agent = agent.clone();
+                    let event_tx = agent.event_sender();
+                    tokio::spawn(async move {
+                        if let Err(e) = agent.send_message(thread_id.as_deref(), &content).await {
+                            let _ = event_tx.send(crate::agent::types::AgentEvent::Error {
+                                thread_id: thread_id.unwrap_or_default(),
+                                message: e.to_string(),
+                            });
+                        }
+                    });
+                }
+
+                ClientMessage::AgentStopStream { .. } => {
+                    // TODO: implement abort via cancellation token per thread
+                }
+
+                ClientMessage::AgentListThreads => {
+                    let threads = agent.list_threads().await;
+                    let json = serde_json::to_string(&threads).unwrap_or_default();
+                    framed.send(DaemonMessage::AgentThreadList { threads_json: json }).await?;
+                }
+
+                ClientMessage::AgentGetThread { thread_id } => {
+                    let thread = agent.get_thread(&thread_id).await;
+                    let json = serde_json::to_string(&thread).unwrap_or_default();
+                    framed.send(DaemonMessage::AgentThreadDetail { thread_json: json }).await?;
+                }
+
+                ClientMessage::AgentDeleteThread { thread_id } => {
+                    agent.delete_thread(&thread_id).await;
+                }
+
+                ClientMessage::AgentAddTask { title, description, priority } => {
+                    let task_id = agent.add_task(title, description, &priority).await;
+                    tracing::info!(%task_id, "agent task added");
+                }
+
+                ClientMessage::AgentCancelTask { task_id } => {
+                    agent.cancel_task(&task_id).await;
+                }
+
+                ClientMessage::AgentListTasks => {
+                    let tasks = agent.list_tasks().await;
+                    let json = serde_json::to_string(&tasks).unwrap_or_default();
+                    framed.send(DaemonMessage::AgentTaskList { tasks_json: json }).await?;
+                }
+
+                ClientMessage::AgentGetConfig => {
+                    let config = agent.get_config().await;
+                    let json = serde_json::to_string(&config).unwrap_or_default();
+                    framed.send(DaemonMessage::AgentConfigResponse { config_json: json }).await?;
+                }
+
+                ClientMessage::AgentSetConfig { config_json } => {
+                    match serde_json::from_str(&config_json) {
+                        Ok(config) => agent.set_config(config).await,
+                        Err(e) => {
+                            framed.send(DaemonMessage::Error { message: format!("Invalid config: {e}") }).await?;
+                        }
+                    }
+                }
+
+                ClientMessage::AgentHeartbeatGetItems => {
+                    let items = agent.get_heartbeat_items().await;
+                    let json = serde_json::to_string(&items).unwrap_or_default();
+                    framed.send(DaemonMessage::AgentHeartbeatItems { items_json: json }).await?;
+                }
+
+                ClientMessage::AgentHeartbeatSetItems { items_json } => {
+                    match serde_json::from_str(&items_json) {
+                        Ok(items) => agent.set_heartbeat_items(items).await,
+                        Err(e) => {
+                            framed.send(DaemonMessage::Error { message: format!("Invalid heartbeat items: {e}") }).await?;
+                        }
+                    }
+                }
+
+                ClientMessage::AgentSubscribe => {
+                    agent_event_rx = Some(agent.subscribe());
+                    tracing::info!("client subscribed to agent events");
+                }
+
+                ClientMessage::AgentUnsubscribe => {
+                    agent_event_rx = None;
+                    tracing::info!("client unsubscribed from agent events");
                 }
             }
         }

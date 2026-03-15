@@ -59,6 +59,44 @@ enum BridgeCommand {
     KillSession,
 }
 
+/// Commands for the agent bridge (JSON over stdin).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum AgentBridgeCommand {
+    SendMessage {
+        thread_id: Option<String>,
+        content: String,
+    },
+    StopStream {
+        thread_id: String,
+    },
+    ListThreads,
+    GetThread {
+        thread_id: String,
+    },
+    DeleteThread {
+        thread_id: String,
+    },
+    AddTask {
+        title: String,
+        description: String,
+        priority: Option<String>,
+    },
+    CancelTask {
+        task_id: String,
+    },
+    ListTasks,
+    GetConfig,
+    SetConfig {
+        config_json: String,
+    },
+    HeartbeatGetItems,
+    HeartbeatSetItems {
+        items_json: String,
+    },
+    Shutdown,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum BridgeEvent {
@@ -666,4 +704,132 @@ fn is_missing_session_error(error: &anyhow::Error) -> bool {
         .to_string()
         .to_ascii_lowercase()
         .contains("session not found")
+}
+
+// ---------------------------------------------------------------------------
+// Agent bridge — persistent connection for agent engine IPC
+// ---------------------------------------------------------------------------
+
+fn emit_agent_event(json: &str) -> Result<()> {
+    println!("{json}");
+    Ok(())
+}
+
+pub async fn run_agent_bridge() -> Result<()> {
+    let mut framed = connect().await?;
+
+    // Subscribe to agent events
+    framed.send(ClientMessage::AgentSubscribe).await?;
+
+    // Emit ready signal
+    println!(r#"{{"type":"ready"}}"#);
+
+    let mut stdin_lines = BufReader::new(tokio::io::stdin()).lines();
+
+    loop {
+        tokio::select! {
+            maybe_line = stdin_lines.next_line() => {
+                match maybe_line? {
+                    Some(line) => {
+                        let command: AgentBridgeCommand = match serde_json::from_str(&line) {
+                            Ok(cmd) => cmd,
+                            Err(error) => {
+                                let err_json = serde_json::json!({"type":"error","message":format!("invalid command: {error}")});
+                                emit_agent_event(&err_json.to_string())?;
+                                continue;
+                            }
+                        };
+
+                        match command {
+                            AgentBridgeCommand::SendMessage { thread_id, content } => {
+                                framed.send(ClientMessage::AgentSendMessage { thread_id, content }).await?;
+                            }
+                            AgentBridgeCommand::StopStream { thread_id } => {
+                                framed.send(ClientMessage::AgentStopStream { thread_id }).await?;
+                            }
+                            AgentBridgeCommand::ListThreads => {
+                                framed.send(ClientMessage::AgentListThreads).await?;
+                            }
+                            AgentBridgeCommand::GetThread { thread_id } => {
+                                framed.send(ClientMessage::AgentGetThread { thread_id }).await?;
+                            }
+                            AgentBridgeCommand::DeleteThread { thread_id } => {
+                                framed.send(ClientMessage::AgentDeleteThread { thread_id }).await?;
+                            }
+                            AgentBridgeCommand::AddTask { title, description, priority } => {
+                                framed.send(ClientMessage::AgentAddTask {
+                                    title,
+                                    description,
+                                    priority: priority.unwrap_or_else(|| "normal".into()),
+                                }).await?;
+                            }
+                            AgentBridgeCommand::CancelTask { task_id } => {
+                                framed.send(ClientMessage::AgentCancelTask { task_id }).await?;
+                            }
+                            AgentBridgeCommand::ListTasks => {
+                                framed.send(ClientMessage::AgentListTasks).await?;
+                            }
+                            AgentBridgeCommand::GetConfig => {
+                                framed.send(ClientMessage::AgentGetConfig).await?;
+                            }
+                            AgentBridgeCommand::SetConfig { config_json } => {
+                                framed.send(ClientMessage::AgentSetConfig { config_json }).await?;
+                            }
+                            AgentBridgeCommand::HeartbeatGetItems => {
+                                framed.send(ClientMessage::AgentHeartbeatGetItems).await?;
+                            }
+                            AgentBridgeCommand::HeartbeatSetItems { items_json } => {
+                                framed.send(ClientMessage::AgentHeartbeatSetItems { items_json }).await?;
+                            }
+                            AgentBridgeCommand::Shutdown => {
+                                framed.send(ClientMessage::AgentUnsubscribe).await?;
+                                break;
+                            }
+                        }
+                    }
+                    None => break,
+                }
+            }
+            maybe_message = framed.next() => {
+                match maybe_message {
+                    Some(Ok(DaemonMessage::AgentEvent { event_json })) => {
+                        emit_agent_event(&event_json)?;
+                    }
+                    Some(Ok(DaemonMessage::AgentThreadList { threads_json })) => {
+                        let msg = serde_json::json!({"type":"thread-list","data":serde_json::from_str::<serde_json::Value>(&threads_json).unwrap_or_default()});
+                        emit_agent_event(&msg.to_string())?;
+                    }
+                    Some(Ok(DaemonMessage::AgentThreadDetail { thread_json })) => {
+                        let msg = serde_json::json!({"type":"thread-detail","data":serde_json::from_str::<serde_json::Value>(&thread_json).unwrap_or_default()});
+                        emit_agent_event(&msg.to_string())?;
+                    }
+                    Some(Ok(DaemonMessage::AgentTaskList { tasks_json })) => {
+                        let msg = serde_json::json!({"type":"task-list","data":serde_json::from_str::<serde_json::Value>(&tasks_json).unwrap_or_default()});
+                        emit_agent_event(&msg.to_string())?;
+                    }
+                    Some(Ok(DaemonMessage::AgentConfigResponse { config_json })) => {
+                        let msg = serde_json::json!({"type":"config","data":serde_json::from_str::<serde_json::Value>(&config_json).unwrap_or_default()});
+                        emit_agent_event(&msg.to_string())?;
+                    }
+                    Some(Ok(DaemonMessage::AgentHeartbeatItems { items_json })) => {
+                        let msg = serde_json::json!({"type":"heartbeat-items","data":serde_json::from_str::<serde_json::Value>(&items_json).unwrap_or_default()});
+                        emit_agent_event(&msg.to_string())?;
+                    }
+                    Some(Ok(DaemonMessage::Error { message })) => {
+                        let msg = serde_json::json!({"type":"error","message":message});
+                        emit_agent_event(&msg.to_string())?;
+                    }
+                    Some(Ok(_)) => {} // Ignore non-agent messages
+                    Some(Err(error)) => return Err(error.into()),
+                    None => {
+                        let msg = serde_json::json!({"type":"error","message":"daemon connection closed"});
+                        emit_agent_event(&msg.to_string())?;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

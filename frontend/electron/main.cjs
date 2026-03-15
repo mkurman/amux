@@ -19,6 +19,11 @@ const VISION_SCREENSHOT_TTL_MS = 10 * 60 * 1000;
 let mainWindow = null;
 const terminalBridges = new Map();
 const paneSessionHints = new Map();
+let agentBridge = null;
+// Module-level reference to sendAgentCommand (set during registerIpcHandlers)
+let sendAgentCommandFn = null;
+// Track the active daemon thread ID for routing gateway messages
+let activeDaemonThreadId = null;
 
 // ---------------------------------------------------------------------------
 // WhatsApp bridge sidecar management
@@ -2853,6 +2858,285 @@ function registerIpcHandlers() {
     ipcMain.handle('whatsapp-send', async (_event, jid, text) => {
         return await whatsappRpc('send', { jid, text });
     });
+
+    // -----------------------------------------------------------------
+    // Agent engine — bridge process IPC
+    //
+    // Spawns a persistent `tamux agent-bridge` CLI process that
+    // maintains a socket connection to the daemon. All agent messages
+    // flow through this bridge as JSON over stdin/stdout.
+    // -----------------------------------------------------------------
+
+    function ensureAgentBridge() {
+        if (agentBridge && !agentBridge.process.killed) return agentBridge;
+
+        const cliPath = getDaemonPath().replace(/tamux-daemon/, 'tamux').replace(/tamux-daemon\.exe/, 'tamux.exe');
+        if (!fs.existsSync(cliPath)) {
+            logToFile('warn', 'agent bridge: tamux CLI not found', { cliPath });
+            return null;
+        }
+
+        const bridgeProcess = spawn(cliPath, ['agent-bridge'], {
+            cwd: path.dirname(cliPath),
+            windowsHide: true,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        agentBridge = {
+            process: bridgeProcess,
+            ready: false,
+            pending: new Map(), // requestId -> { resolve, reject }
+            stdoutBuffer: '',
+        };
+
+        bridgeProcess.stdout.on('data', (chunk) => {
+            agentBridge.stdoutBuffer += chunk.toString('utf8');
+            const lines = agentBridge.stdoutBuffer.split(/\r?\n/);
+            agentBridge.stdoutBuffer = lines.pop() ?? '';
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                let event;
+                try {
+                    event = JSON.parse(line);
+                } catch {
+                    continue;
+                }
+
+                if (event.type === 'ready') {
+                    agentBridge.ready = true;
+                    logToFile('info', 'agent bridge ready');
+                    continue;
+                }
+
+                // Response types from daemon queries
+                if (['thread-list', 'thread-detail', 'task-list', 'config', 'heartbeat-items'].includes(event.type)) {
+                    // Resolve any pending request for this type
+                    for (const [reqId, handler] of agentBridge.pending.entries()) {
+                        if (handler.responseType === event.type) {
+                            handler.resolve(event.data);
+                            agentBridge.pending.delete(reqId);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
+                // Track daemon thread ID for gateway message routing
+                if (event.type === 'thread_created' && event.thread_id) {
+                    activeDaemonThreadId = event.thread_id;
+                }
+
+                // Handle gateway_send events — execute the actual send
+                if (event.type === 'gateway_send') {
+                    handleAgentGatewaySend(event).catch((err) => {
+                        logToFile('warn', 'agent gateway send failed', { error: err.message, event });
+                    });
+                    continue;
+                }
+
+                // Agent events (delta, done, tool_call, etc.) — forward to renderer
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('agent-event', event);
+                }
+            }
+        });
+
+        bridgeProcess.stderr.on('data', (chunk) => {
+            logToFile('warn', 'agent bridge stderr', { message: chunk.toString('utf8').trim() });
+        });
+
+        bridgeProcess.on('exit', (code) => {
+            logToFile('info', 'agent bridge exited', { code });
+            // Reject pending requests
+            for (const [, handler] of (agentBridge?.pending ?? new Map()).entries()) {
+                handler.reject(new Error('agent bridge exited'));
+            }
+            agentBridge = null;
+        });
+
+        return agentBridge;
+    }
+
+    async function handleAgentGatewaySend(event) {
+        // Read settings to get gateway tokens
+        const settingsPath = path.join(getTamuxDataDir(), 'settings.json');
+        let settings = {};
+        try {
+            settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        } catch {
+            logToFile('warn', 'agent gateway: cannot read settings for tokens');
+            return;
+        }
+
+        const { platform, target, message } = event;
+
+        switch (platform) {
+            case 'slack': {
+                const token = settings.slackToken || '';
+                if (!token) { logToFile('warn', 'agent gateway: no Slack token configured'); return; }
+                await sendSlackMessage(null, { token, channelId: target, message });
+                break;
+            }
+            case 'discord': {
+                const token = settings.discordToken || '';
+                if (!token) { logToFile('warn', 'agent gateway: no Discord token configured'); return; }
+                await sendDiscordMessage(null, { token, channelId: target, message });
+                break;
+            }
+            case 'telegram': {
+                const token = settings.telegramToken || '';
+                if (!token) { logToFile('warn', 'agent gateway: no Telegram token configured'); return; }
+                await sendTelegramMessage(null, { token, chatId: target, message });
+                break;
+            }
+            case 'whatsapp': {
+                try {
+                    await whatsappRpc('send', { jid: target, text: message });
+                } catch (err) {
+                    logToFile('warn', 'agent gateway: WhatsApp send failed', { error: err.message });
+                }
+                break;
+            }
+        }
+    }
+
+    function sendAgentCommand(command) {
+        const bridge = ensureAgentBridge();
+        if (!bridge || bridge.process.killed || !bridge.process.stdin.writable) {
+            throw new Error('Agent bridge not available. Is the daemon running?');
+        }
+        bridge.process.stdin.write(`${JSON.stringify(command)}\n`);
+    }
+
+    // Expose to module scope for gateway message forwarding
+    sendAgentCommandFn = sendAgentCommand;
+
+    function sendAgentQuery(command, responseType, timeoutMs = 5000) {
+        return new Promise((resolve, reject) => {
+            const bridge = ensureAgentBridge();
+            if (!bridge) {
+                reject(new Error('Agent bridge not available'));
+                return;
+            }
+            const reqId = `${responseType}_${Date.now()}`;
+            const timer = setTimeout(() => {
+                bridge.pending.delete(reqId);
+                reject(new Error(`Agent query timeout: ${responseType}`));
+            }, timeoutMs);
+
+            bridge.pending.set(reqId, {
+                responseType,
+                resolve: (data) => { clearTimeout(timer); resolve(data); },
+                reject: (err) => { clearTimeout(timer); reject(err); },
+            });
+
+            sendAgentCommand(command);
+        });
+    }
+
+    ipcMain.handle('agent-send-message', async (_event, threadId, content) => {
+        try {
+            sendAgentCommand({ type: 'send-message', thread_id: threadId || null, content });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('agent-stop-stream', async (_event, threadId) => {
+        try {
+            sendAgentCommand({ type: 'stop-stream', thread_id: threadId });
+            return { ok: true };
+        } catch {
+            return { ok: true };
+        }
+    });
+
+    ipcMain.handle('agent-list-threads', async () => {
+        try {
+            return await sendAgentQuery({ type: 'list-threads' }, 'thread-list');
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('agent-get-thread', async (_event, threadId) => {
+        try {
+            return await sendAgentQuery({ type: 'get-thread', thread_id: threadId }, 'thread-detail');
+        } catch {
+            return null;
+        }
+    });
+
+    ipcMain.handle('agent-delete-thread', async (_event, threadId) => {
+        try {
+            sendAgentCommand({ type: 'delete-thread', thread_id: threadId });
+            return true;
+        } catch {
+            return false;
+        }
+    });
+
+    ipcMain.handle('agent-add-task', async (_event, title, description, priority) => {
+        try {
+            sendAgentCommand({ type: 'add-task', title, description, priority: priority || 'normal' });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('agent-cancel-task', async (_event, taskId) => {
+        try {
+            sendAgentCommand({ type: 'cancel-task', task_id: taskId });
+            return true;
+        } catch {
+            return false;
+        }
+    });
+
+    ipcMain.handle('agent-list-tasks', async () => {
+        try {
+            return await sendAgentQuery({ type: 'list-tasks' }, 'task-list');
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('agent-get-config', async () => {
+        try {
+            return await sendAgentQuery({ type: 'get-config' }, 'config');
+        } catch {
+            return {};
+        }
+    });
+
+    ipcMain.handle('agent-set-config', async (_event, config) => {
+        try {
+            sendAgentCommand({ type: 'set-config', config_json: JSON.stringify(config) });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
+    });
+
+    ipcMain.handle('agent-heartbeat-get-items', async () => {
+        try {
+            return await sendAgentQuery({ type: 'heartbeat-get-items' }, 'heartbeat-items');
+        } catch {
+            return [];
+        }
+    });
+
+    ipcMain.handle('agent-heartbeat-set-items', async (_event, items) => {
+        try {
+            sendAgentCommand({ type: 'heartbeat-set-items', items_json: JSON.stringify(items) });
+            return { ok: true };
+        } catch (err) {
+            return { ok: false, error: err.message };
+        }
+    });
 }
 
 configureChromiumRuntimePaths();
@@ -2876,6 +3160,89 @@ app.whenReady().then(async () => {
     registerIpcHandlers();
     await spawnDaemon();
     createWindow();
+
+    // Hook gateway message forwarding to agent after window is created.
+    // Incoming Slack/Discord/Telegram/WhatsApp messages are forwarded to
+    // the daemon agent so it can respond autonomously.
+    if (mainWindow) {
+        const origSend = mainWindow.webContents.send.bind(mainWindow.webContents);
+        mainWindow.webContents.send = function (channel, ...args) {
+            origSend(channel, ...args);
+
+            const gatewayChannels = {
+                'slack-message': (d) => ({ platform: 'Slack', sender: d.username || d.userId || 'unknown', content: d.content }),
+                'telegram-message': (d) => ({ platform: 'Telegram', sender: d.username || String(d.userId || ''), content: d.content }),
+                'discord-message': (d) => ({ platform: 'Discord', sender: d.authorName || d.authorId || 'unknown', content: d.content }),
+                'whatsapp-message': (d) => ({ platform: 'WhatsApp', sender: d.sender || d.jid || 'unknown', content: d.content || d.text || '' }),
+            };
+
+            const extractor = gatewayChannels[channel];
+            if (extractor && args[0]) {
+                try {
+                    const { platform, sender, content } = extractor(args[0]);
+                    if (content && sendAgentCommandFn) {
+                        // Route to the active daemon thread so the
+                        // response appears in the current chat
+                        sendAgentCommandFn({
+                            type: 'send-message',
+                            thread_id: activeDaemonThreadId || null,
+                            content: `[Incoming ${platform} message from ${sender}]: ${content}`,
+                        });
+                        // Also forward to renderer as an agent event so
+                        // the incoming message appears in the chat UI
+                        if (mainWindow && !mainWindow.isDestroyed()) {
+                            origSend('agent-event', {
+                                type: 'gateway_incoming',
+                                platform,
+                                sender,
+                                content,
+                            });
+                        }
+                    }
+                } catch {
+                    // Agent bridge not available
+                }
+            }
+        };
+    }
+
+    // Auto-connect gateway platforms when tokens are configured.
+    // In legacy mode, the renderer calls ensure*Connected. In daemon
+    // mode, nothing does — so we do it here on startup.
+    try {
+        const settingsPath = path.join(getTamuxDataDir(), 'settings.json');
+        if (fs.existsSync(settingsPath)) {
+            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+
+            if (settings.gatewayEnabled) {
+                if (settings.slackToken) {
+                    ensureSlackConnected(null, { token: settings.slackToken })
+                        .then((r) => logToFile('info', 'auto-connected Slack', r))
+                        .catch((e) => logToFile('warn', 'Slack auto-connect failed', { error: e.message }));
+                }
+                if (settings.discordToken) {
+                    ensureDiscordConnected(null, {
+                        token: settings.discordToken,
+                        channelFilter: settings.discordChannelFilter || '',
+                        allowedUsers: settings.discordAllowedUsers || '',
+                    })
+                        .then((r) => logToFile('info', 'auto-connected Discord', r))
+                        .catch((e) => logToFile('warn', 'Discord auto-connect failed', { error: e.message }));
+                }
+                if (settings.telegramToken) {
+                    ensureTelegramConnected(null, {
+                        token: settings.telegramToken,
+                        allowedChats: settings.telegramAllowedChats || '',
+                    })
+                        .then((r) => logToFile('info', 'auto-connected Telegram', r))
+                        .catch((e) => logToFile('warn', 'Telegram auto-connect failed', { error: e.message }));
+                }
+            }
+        }
+    } catch (err) {
+        logToFile('warn', 'gateway auto-connect error', { error: err.message });
+    }
+
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

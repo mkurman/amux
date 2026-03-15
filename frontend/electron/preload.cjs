@@ -222,6 +222,25 @@ const bridgeApi = {
         ipcRenderer.on('whatsapp-message', listener);
         return () => ipcRenderer.removeListener('whatsapp-message', listener);
     },
+
+    // Agent engine (daemon-side)
+    agentSendMessage: (threadId, content) => ipcRenderer.invoke('agent-send-message', threadId, content),
+    agentStopStream: (threadId) => ipcRenderer.invoke('agent-stop-stream', threadId),
+    agentListThreads: () => ipcRenderer.invoke('agent-list-threads'),
+    agentGetThread: (threadId) => ipcRenderer.invoke('agent-get-thread', threadId),
+    agentDeleteThread: (threadId) => ipcRenderer.invoke('agent-delete-thread', threadId),
+    agentAddTask: (title, description, priority) => ipcRenderer.invoke('agent-add-task', title, description, priority),
+    agentCancelTask: (taskId) => ipcRenderer.invoke('agent-cancel-task', taskId),
+    agentListTasks: () => ipcRenderer.invoke('agent-list-tasks'),
+    agentGetConfig: () => ipcRenderer.invoke('agent-get-config'),
+    agentSetConfig: (config) => ipcRenderer.invoke('agent-set-config', config),
+    agentHeartbeatGetItems: () => ipcRenderer.invoke('agent-heartbeat-get-items'),
+    agentHeartbeatSetItems: (items) => ipcRenderer.invoke('agent-heartbeat-set-items', items),
+    onAgentEvent: (cb) => {
+        const listener = (_event, data) => cb(data);
+        ipcRenderer.on('agent-event', listener);
+        return () => ipcRenderer.removeListener('agent-event', listener);
+    },
 };
 
 contextBridge.exposeInMainWorld('tamux', bridgeApi);

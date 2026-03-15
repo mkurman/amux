@@ -1,3 +1,4 @@
+pub mod agent;
 mod criu;
 mod git;
 mod history;

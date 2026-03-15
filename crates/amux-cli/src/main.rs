@@ -88,6 +88,10 @@ enum Commands {
         target: InstallTarget,
     },
 
+    /// Internal agent bridge used by the Electron frontend.
+    #[command(hide = true, name = "agent-bridge")]
+    AgentBridge,
+
     /// Internal JSON bridge used by the Electron frontend.
     #[command(hide = true, name = "bridge")]
     Bridge {
@@ -271,6 +275,10 @@ async fn main() -> Result<()> {
                 );
             }
         },
+
+        Commands::AgentBridge => {
+            client::run_agent_bridge().await?;
+        }
 
         Commands::Bridge {
             session,
