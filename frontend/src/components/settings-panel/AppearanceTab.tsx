@@ -68,6 +68,16 @@ export function AppearanceTab({
                 ) : null}
             </Section>
 
+            <Section title="Performance">
+                <SettingRow label="GPU Acceleration">
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Toggle value={settings.gpuAcceleration}
+                            onChange={(value) => updateSetting("gpuAcceleration", value)} />
+                        <span style={{ fontSize: 11, opacity: 0.5 }}>(requires restart)</span>
+                    </div>
+                </SettingRow>
+            </Section>
+
             <Section title="Window">
                 <SettingRow label="Opacity">
                     <SliderInput value={settings.opacity} min={0.3} max={1} step={0.05}

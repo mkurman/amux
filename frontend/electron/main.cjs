@@ -737,13 +737,26 @@ function configureChromiumRuntimePaths() {
         });
     }
 
-    // In constrained environments (WSL, locked-down profiles), GPU cache
-    // creation may fail and break UI flows like QR rendering.
-    app.disableHardwareAcceleration();
-    app.commandLine.appendSwitch('disable-gpu');
-    app.commandLine.appendSwitch('disable-gpu-compositing');
-    app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
-    app.commandLine.appendSwitch('disable-gpu-program-cache');
+    // GPU acceleration: enabled by default for smooth terminal rendering.
+    // Users can disable via settings.json { "gpuAcceleration": false } if
+    // their environment (WSL, locked-down profiles) has GPU cache issues.
+    const settingsPath = path.join(getTamuxDataDir(), 'settings.json');
+    let gpuEnabled = true;
+    try {
+        const raw = fs.readFileSync(settingsPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.gpuAcceleration === false) {
+            gpuEnabled = false;
+        }
+    } catch {}
+
+    if (!gpuEnabled) {
+        app.disableHardwareAcceleration();
+        app.commandLine.appendSwitch('disable-gpu');
+        app.commandLine.appendSwitch('disable-gpu-compositing');
+        app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+        app.commandLine.appendSwitch('disable-gpu-program-cache');
+    }
 }
 
 function resolveDataPath(relativePath) {

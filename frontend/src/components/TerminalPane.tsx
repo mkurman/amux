@@ -626,16 +626,23 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     try {
       const webglAddon = new WebglAddon();
       term.loadAddon(webglAddon);
+      console.log(`[pane:${paneId}] renderer: webgl`);
       const contextLossDisposable = webglAddon.onContextLoss(() => {
         try {
           term.loadAddon(new CanvasAddon());
+          console.log(`[pane:${paneId}] renderer: canvas (webgl context lost)`);
         } catch {
-          // ignore fallback initialization failures
+          console.log(`[pane:${paneId}] renderer: dom (fallback after context loss)`);
         }
       });
       renderCleanup = () => contextLossDisposable.dispose();
     } catch {
-      term.loadAddon(new CanvasAddon());
+      try {
+        term.loadAddon(new CanvasAddon());
+        console.log(`[pane:${paneId}] renderer: canvas`);
+      } catch {
+        console.log(`[pane:${paneId}] renderer: dom (slowest)`);
+      }
     }
     term.loadAddon(new WebLinksAddon());
 
