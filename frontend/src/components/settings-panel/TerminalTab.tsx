@@ -1,9 +1,16 @@
 import type { AmuxSettings, ShellProfile } from "../../lib/types";
 import { addBtnStyle, inputStyle, NumberInput, Section, SettingRow, type SettingsUpdater, SliderInput, smallBtnStyle, TextInput, Toggle } from "./shared";
 
+interface AvailableShell {
+    name: string;
+    path: string;
+    args?: string;
+}
+
 export function TerminalTab({
     settings,
     updateSetting,
+    availableShells,
     profiles,
     addProfile,
     removeProfile,
@@ -12,19 +19,42 @@ export function TerminalTab({
 }: {
     settings: AmuxSettings;
     updateSetting: SettingsUpdater;
+    availableShells: AvailableShell[];
     profiles: ShellProfile[];
     addProfile: (profile: ShellProfile) => void;
     removeProfile: (id: string) => void;
     updateProfile: (id: string, updates: Partial<ShellProfile>) => void;
     setDefaultProfile: (id: string) => void;
 }) {
+    const currentShellInList = availableShells.some((s) => s.path === settings.defaultShell);
+
     return (
         <>
             <Section title="Shell">
                 <SettingRow label="Default Shell">
-                    <TextInput value={settings.defaultShell}
-                        onChange={(value) => updateSetting("defaultShell", value)}
-                        placeholder="(system default)" />
+                    <select
+                        value={settings.defaultShell}
+                        onChange={(e) => {
+                            const selected = availableShells.find((s) => s.path === e.target.value);
+                            updateSetting("defaultShell", e.target.value);
+                            if (selected?.args && !settings.defaultShellArgs) {
+                                updateSetting("defaultShellArgs", selected.args);
+                            }
+                        }}
+                        style={inputStyle}
+                    >
+                        <option value="">(system default)</option>
+                        {availableShells.map((shell) => (
+                            <option key={`${shell.path}:${shell.args ?? ""}`} value={shell.path}>
+                                {shell.name} — {shell.path}
+                            </option>
+                        ))}
+                        {settings.defaultShell && !currentShellInList && (
+                            <option value={settings.defaultShell}>
+                                {settings.defaultShell} (custom)
+                            </option>
+                        )}
+                    </select>
                 </SettingRow>
                 <SettingRow label="Shell Arguments">
                     <TextInput value={settings.defaultShellArgs}

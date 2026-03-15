@@ -1,19 +1,8 @@
 import type { OperationalEvent } from "./agentMissionStore";
 import { encodeTextToBase64, stripAnsi } from "../components/terminal-pane/utils";
 
-const DUPLICATE_BOOTSTRAP_CMDS = new Set([
-  "codex",
-  "claude",
-  "opencode",
-  "aider",
-]);
-
-function normalizeCommandToken(value: string): string {
-  const trimmed = stripAnsi(value).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
-  if (!trimmed) return "";
-  const firstToken = trimmed.split(/\s+/)[0] ?? "";
-  const baseName = firstToken.split(/[\\/]/).pop() ?? firstToken;
-  return baseName.replace(/\.(exe|cmd|bat|sh)$/i, "").toLowerCase();
+function cleanCommand(value: string): string {
+  return stripAnsi(value).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
 }
 
 export function resolveDuplicateBootstrapCommand(
@@ -25,11 +14,7 @@ export function resolveDuplicateBootstrapCommand(
     .sort((a, b) => b.timestamp - a.timestamp)[0]?.command;
 
   if (!lastCommand) return null;
-  const executable = normalizeCommandToken(lastCommand);
-  if (!DUPLICATE_BOOTSTRAP_CMDS.has(executable)) {
-    return null;
-  }
-  return executable;
+  return cleanCommand(lastCommand) || null;
 }
 
 export function resolveDuplicateActiveBootstrapCommand(
@@ -55,11 +40,7 @@ export function resolveDuplicateActiveBootstrapCommand(
     return null;
   }
 
-  const executable = normalizeCommandToken(activeCommand);
-  if (!DUPLICATE_BOOTSTRAP_CMDS.has(executable)) {
-    return null;
-  }
-  return executable;
+  return cleanCommand(activeCommand) || null;
 }
 
 export function resolveDuplicateSourceSessionId(
@@ -150,10 +131,11 @@ export async function cloneSessionForDuplication(
   sourceSessionId?: string | null,
   opts?: {
     workspaceId?: string | null;
+    cwd?: string | null;
     cols?: number;
     rows?: number;
   },
-): Promise<string | null> {
+): Promise<{ sessionId: string; activeCommand: string | null } | null> {
   const bridge = (window as any).tamux ?? (window as any).amux;
   if (!bridge?.cloneTerminalSession) {
     return null;
@@ -176,13 +158,15 @@ export async function cloneSessionForDuplication(
       sourcePaneId,
       sourceSessionId: normalizedSourceSessionId,
       ...(opts?.workspaceId ? { workspaceId: opts.workspaceId } : {}),
+      ...(opts?.cwd ? { cwd: opts.cwd } : {}),
       ...(typeof cols === "number" ? { cols } : {}),
       ...(typeof rows === "number" ? { rows } : {}),
     });
     const sessionId = typeof result?.sessionId === "string" ? result.sessionId.trim() : "";
-    return sessionId || null;
+    if (!sessionId) return null;
+    const activeCommand = typeof result?.activeCommand === "string" ? result.activeCommand : null;
+    return { sessionId, activeCommand };
   } catch (error) {
-    // Keep duplication flow resilient but visible during debugging.
     console.warn("cloneSessionForDuplication failed", {
       sourcePaneId,
       sourceSessionId: unwrapCloneSessionId(sourceSessionId),

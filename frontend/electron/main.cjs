@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, clipboard, ipcMain, screen, shell, session } = require('electron');
-const { spawn, spawnSync, execSync } = require('child_process');
+const { spawn, spawnSync, execSync, execFileSync } = require('child_process');
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const path = require('path');
 const net = require('net');
@@ -1679,6 +1679,9 @@ async function cloneTerminalSession(_event, payload = {}) {
     if (Number.isFinite(payload.rows)) {
         args.push('--rows', String(Math.max(2, Math.trunc(payload.rows))));
     }
+    if (typeof payload.cwd === 'string' && payload.cwd.trim()) {
+        args.push('--cwd', payload.cwd.trim());
+    }
 
     logToFile('info', 'cloning terminal session', {
         sourcePaneId: sourcePaneId || null,
@@ -1719,19 +1722,24 @@ async function cloneTerminalSession(_event, payload = {}) {
                     .split(/\r?\n/)
                     .map((line) => line.trim())
                     .filter(Boolean);
-                const sessionId = lines[lines.length - 1] ?? '';
+                const sessionId = lines[0] ?? '';
                 if (!sessionId) {
                     reject(new Error('tamux clone did not return a session id'));
                     return;
                 }
 
-                resolve({ sessionId });
+                // Parse optional active_command from daemon
+                const cmdLine = lines.find((l) => l.startsWith('active_command:'));
+                const activeCommand = cmdLine ? cmdLine.slice('active_command:'.length) : null;
+
+                resolve({ sessionId, activeCommand });
             });
         });
 
         logToFile('info', 'cloned terminal session', {
             sourceSessionId,
             clonedSessionId: result.sessionId,
+            activeCommand: result.activeCommand ?? null,
         });
         return result;
     } catch (error) {
@@ -2411,6 +2419,73 @@ function getSystemFonts() {
     }
 }
 
+function getAvailableShells() {
+    const shells = [];
+    try {
+        if (process.platform === 'win32') {
+            // Known Windows shell paths
+            const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+            const windowsShells = [
+                { name: 'Windows PowerShell', path: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') },
+                { name: 'Command Prompt', path: path.join(systemRoot, 'System32', 'cmd.exe') },
+            ];
+
+            // PowerShell 7 (try where.exe to find it)
+            try {
+                const pwshPath = execFileSync('where.exe', ['pwsh.exe'], {
+                    encoding: 'utf-8', timeout: 5000, windowsHide: true,
+                }).split('\n')[0].trim();
+                if (pwshPath) {
+                    shells.push({ name: 'PowerShell 7', path: pwshPath });
+                }
+            } catch {}
+
+            for (const s of windowsShells) {
+                if (fs.existsSync(s.path)) {
+                    shells.push(s);
+                }
+            }
+
+            // Detect WSL distributions
+            try {
+                const wslOut = execFileSync('wsl.exe', ['-l', '-q'], {
+                    encoding: 'utf-16le', timeout: 5000, windowsHide: true,
+                });
+                const distros = wslOut.split('\n')
+                    .map((s) => s.replace(/\0/g, '').trim())
+                    .filter(Boolean);
+                if (distros.length > 0) {
+                    shells.push({ name: 'WSL (default)', path: 'wsl' });
+                }
+                for (const distro of distros) {
+                    shells.push({ name: `WSL: ${distro}`, path: 'wsl', args: `-d ${distro}` });
+                }
+            } catch {}
+        } else {
+            // Unix: read /etc/shells
+            try {
+                const content = fs.readFileSync('/etc/shells', 'utf-8');
+                const shellPaths = content.split('\n')
+                    .map((line) => line.trim())
+                    .filter((line) => line && !line.startsWith('#'));
+                for (const shellPath of shellPaths) {
+                    if (fs.existsSync(shellPath)) {
+                        shells.push({ name: path.basename(shellPath), path: shellPath });
+                    }
+                }
+            } catch {}
+
+            // Fallback to $SHELL
+            if (shells.length === 0 && process.env.SHELL) {
+                shells.push({ name: path.basename(process.env.SHELL), path: process.env.SHELL });
+            }
+        }
+    } catch {
+        // Return whatever we collected so far
+    }
+    return shells;
+}
+
 let lastCpuSnapshot = null;
 
 function aggregateCpuTimes() {
@@ -2642,6 +2717,7 @@ function registerIpcHandlers() {
     ipcMain.handle('checkDaemon', () => checkDaemonRunning());
     ipcMain.handle('spawnDaemon', () => spawnDaemon());
     ipcMain.handle('getSystemFonts', () => getSystemFonts());
+    ipcMain.handle('getAvailableShells', () => getAvailableShells());
     ipcMain.handle('system-monitor-snapshot', getSystemMonitorSnapshot);
     ipcMain.handle('getDaemonPath', () => getDaemonPath());
     ipcMain.handle('getPlatform', () => process.platform);

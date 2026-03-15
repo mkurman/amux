@@ -406,24 +406,24 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
       findLeaf(surface.layout, paneId)?.sessionId ?? requestedSessionIdRef.current ?? null,
       operationalEvents,
     );
-    const targetSessionId = await cloneSessionForDuplication(paneId, sourceSessionId, {
+    const cloneResult = await cloneSessionForDuplication(paneId, sourceSessionId, {
       workspaceId: workspace.id,
+      cwd: workspace.cwd || null,
     });
     const sourceName = surface.paneNames[paneId] ?? paneName;
     const sourceIcon = surface.paneIcons[paneId] ?? "terminal";
 
     splitActive(direction, `${sourceName} Copy`, {
-      sessionId: targetSessionId ?? null,
+      sessionId: cloneResult?.sessionId ?? null,
       paneIcon: sourceIcon,
     });
 
     const duplicatedPaneId = useWorkspaceStore.getState().activePaneId();
     if (!duplicatedPaneId) return;
-    const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents);
-    const fallbackBootstrapCommand = !targetSessionId
-      ? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
-      : null;
-    const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+    const bootstrapCommand =
+      resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents)
+      ?? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
+      ?? cloneResult?.activeCommand;
     if (bootstrapCommand) {
       queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
     }
@@ -1170,7 +1170,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
         const cloneSourceSessionId = parseCloneSessionToken(requestedSessionId);
         if (cloneSourceSessionId) {
           const normalizedSourceSessionId = unwrapCloneSessionId(cloneSourceSessionId);
-          const clonedSessionId = await cloneSessionForDuplication(
+          const cloneResult = await cloneSessionForDuplication(
             paneId,
             normalizedSourceSessionId,
             {
@@ -1179,10 +1179,10 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
               rows: term.rows,
             },
           );
-          if (clonedSessionId) {
-            requestedSessionId = clonedSessionId;
-            requestedSessionIdRef.current = clonedSessionId;
-            setPaneSessionId(paneId, clonedSessionId);
+          if (cloneResult?.sessionId) {
+            requestedSessionId = cloneResult.sessionId;
+            requestedSessionIdRef.current = cloneResult.sessionId;
+            setPaneSessionId(paneId, cloneResult.sessionId);
           } else if (normalizedSourceSessionId) {
             // Degrade to source session id to avoid passing invalid clone tokens to the bridge.
             requestedSessionId = normalizedSourceSessionId;

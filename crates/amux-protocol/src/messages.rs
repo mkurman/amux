@@ -50,6 +50,9 @@ pub enum ClientMessage {
         rows: Option<u16>,
         /// Whether to preload source scrollback into the clone.
         replay_scrollback: bool,
+        /// Fallback CWD when the source session's CWD cannot be resolved
+        /// (e.g. on Windows where /proc is unavailable).
+        cwd: Option<String>,
     },
 
     /// Detach from a session (stop receiving output; session keeps running).
@@ -149,7 +152,13 @@ pub enum DaemonMessage {
     SessionSpawned { id: SessionId },
 
     /// Confirmation that a session was cloned.
-    SessionCloned { source_id: SessionId, id: SessionId },
+    SessionCloned {
+        source_id: SessionId,
+        id: SessionId,
+        /// The command that was actively running in the source session
+        /// (detected via shell integration), if any.
+        active_command: Option<String>,
+    },
 
     /// Confirmation that the client is now attached.
     SessionAttached { id: SessionId },

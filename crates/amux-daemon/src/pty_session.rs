@@ -37,6 +37,10 @@ pub struct PtySession {
     scrollback: Arc<std::sync::Mutex<Vec<u8>>>,
     dead: Arc<AtomicBool>,
     managed_lane: Arc<std::sync::Mutex<ManagedLaneState>>,
+    /// Last active (still-running) command detected via shell integration markers.
+    active_command: Arc<std::sync::Mutex<Option<String>>>,
+    /// CWD reported by the shell integration (works on all platforms).
+    tracked_cwd: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 struct ManagedQueuedCommand {
@@ -61,6 +65,7 @@ struct ManagedLaneState {
 enum CommandLifecycleMarker {
     Started(String),
     Finished(Option<i32>),
+    Cwd(String),
 }
 
 impl PtySession {
@@ -88,8 +93,24 @@ impl PtySession {
         let shell_program = configured_shell.clone().unwrap_or_else(default_shell);
         tracing::info!(id = %id, shell = %shell_program, "starting PTY shell");
         let mut cmd = CommandBuilder::new(&shell_program);
-        configure_shell_command(&shell_program, &mut cmd)?;
+        configure_shell_command(&shell_program, &mut cmd, cwd.as_deref())?;
 
+        // On Windows with WSL, the CWD is passed via --cd flag (handled by
+        // configure_shell_command). For all other shells, set the process CWD.
+        #[cfg(windows)]
+        {
+            let is_wsl = std::path::Path::new(&shell_program)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_ascii_lowercase())
+                .map_or(false, |n| n == "wsl" || n == "wsl.exe");
+            if !is_wsl {
+                if let Some(ref dir) = cwd {
+                    cmd.cwd(dir);
+                }
+            }
+        }
+        #[cfg(not(windows))]
         if let Some(ref dir) = cwd {
             cmd.cwd(dir);
         }
@@ -116,6 +137,10 @@ impl PtySession {
 
         let dead = Arc::new(AtomicBool::new(false));
         let managed_lane = Arc::new(std::sync::Mutex::new(ManagedLaneState::default()));
+        let active_command: Arc<std::sync::Mutex<Option<String>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let tracked_cwd: Arc<std::sync::Mutex<Option<String>>> =
+            Arc::new(std::sync::Mutex::new(None));
 
         let created_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -129,6 +154,8 @@ impl PtySession {
             let dead = dead.clone();
             let master_write = master_write.clone();
             let managed_lane = managed_lane.clone();
+            let active_command = active_command.clone();
+            let tracked_cwd = tracked_cwd.clone();
             let workspace_id = workspace_id.clone();
             let cwd = cwd.clone();
             std::thread::Builder::new()
@@ -142,6 +169,8 @@ impl PtySession {
                         scrollback,
                         dead,
                         managed_lane,
+                        active_command,
+                        tracked_cwd,
                         history,
                         workspace_id,
                         cwd,
@@ -164,6 +193,8 @@ impl PtySession {
             scrollback,
             dead,
             managed_lane,
+            active_command,
+            tracked_cwd,
         })
     }
 
@@ -296,8 +327,13 @@ impl PtySession {
     }
 
     /// Resolve the most current working directory for this PTY process.
-    /// Falls back to the startup cwd when process cwd cannot be queried.
+    /// Priority: shell-integration tracked CWD → /proc/{pid}/cwd (Unix) → startup CWD.
     pub fn resolved_cwd(&self) -> Option<String> {
+        // Shell integration CWD (works on all platforms when integration is active).
+        if let Some(cwd) = self.tracked_cwd.lock().unwrap().clone() {
+            return Some(cwd);
+        }
+
         #[cfg(unix)]
         {
             if let Some(pid) = self.child.lock().unwrap().process_id() {
@@ -334,6 +370,13 @@ impl PtySession {
     pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::SeqCst)
     }
+
+    /// Return the last active (still-running) command detected via shell
+    /// integration markers, or `None` if the shell has no integration or
+    /// the last command has finished.
+    pub fn active_command(&self) -> Option<String> {
+        self.active_command.lock().unwrap().clone()
+    }
 }
 
 /// Background thread that continuously reads PTY output and fans it out.
@@ -345,6 +388,8 @@ fn pty_reader_loop(
     scrollback: Arc<std::sync::Mutex<Vec<u8>>>,
     dead: Arc<AtomicBool>,
     managed_lane: Arc<std::sync::Mutex<ManagedLaneState>>,
+    active_command: Arc<std::sync::Mutex<Option<String>>>,
+    tracked_cwd: Arc<std::sync::Mutex<Option<String>>>,
     history: HistoryStore,
     workspace_id: Option<String>,
     cwd: Option<String>,
@@ -359,6 +404,7 @@ fn pty_reader_loop(
                 break;
             }
             Ok(n) => {
+                tracing::trace!(%id, bytes = n, "PTY reader got output");
                 let mut chunk = Vec::with_capacity(marker_tail.len() + n);
                 if !marker_tail.is_empty() {
                     chunk.extend_from_slice(&marker_tail);
@@ -390,6 +436,7 @@ fn pty_reader_loop(
                 for marker in markers {
                     match marker {
                         CommandLifecycleMarker::Started(command) => {
+                            *active_command.lock().unwrap() = Some(command.clone());
                             let _ = tx.send(DaemonMessage::CommandStarted {
                                 id,
                                 command: command.clone(),
@@ -405,6 +452,7 @@ fn pty_reader_loop(
                             }
                         }
                         CommandLifecycleMarker::Finished(exit_code) => {
+                            *active_command.lock().unwrap() = None;
                             let _ = tx.send(DaemonMessage::CommandFinished { id, exit_code });
 
                             let completed = {
@@ -472,6 +520,9 @@ fn pty_reader_loop(
                                     }
                                 }
                             }
+                        }
+                        CommandLifecycleMarker::Cwd(dir) => {
+                            *tracked_cwd.lock().unwrap() = Some(dir);
                         }
                     }
                 }
@@ -584,6 +635,17 @@ fn extract_command_markers(data: &[u8]) -> (Vec<CommandLifecycleMarker>, Vec<u8>
                         i = end + terminator_len;
                         continue;
                     }
+
+                    if let Some(cwd_b64) = text.strip_prefix("133;P;") {
+                        let dir = base64::engine::general_purpose::STANDARD
+                            .decode(cwd_b64)
+                            .ok()
+                            .and_then(|bytes| String::from_utf8(bytes).ok())
+                            .unwrap_or_else(|| cwd_b64.to_string());
+                        markers.push(CommandLifecycleMarker::Cwd(dir));
+                        i = end + terminator_len;
+                        continue;
+                    }
                 }
             } else {
                 trailing.extend_from_slice(&data[i..]);
@@ -596,6 +658,57 @@ fn extract_command_markers(data: &[u8]) -> (Vec<CommandLifecycleMarker>, Vec<u8>
     }
 
     (markers, cleaned, trailing)
+}
+
+/// Strip CSI sequences that are terminal-to-host responses (focus events,
+/// device attribute responses, cursor position reports) which are meaningless
+/// and disruptive when replayed into a new terminal session.
+pub fn sanitize_scrollback_for_replay(data: &[u8]) -> Vec<u8> {
+    let mut cleaned = Vec::with_capacity(data.len());
+    let mut i = 0;
+
+    while i < data.len() {
+        // Detect CSI: ESC [
+        if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == b'[' {
+            let mut j = i + 2;
+            // Skip parameter bytes (0x30..=0x3F): digits ; ? > =
+            while j < data.len() && (0x30..=0x3F).contains(&data[j]) {
+                j += 1;
+            }
+            // Skip intermediate bytes (0x20..=0x2F)
+            while j < data.len() && (0x20..=0x2F).contains(&data[j]) {
+                j += 1;
+            }
+            // Final byte (0x40..=0x7E)
+            if j < data.len() && (0x40..=0x7E).contains(&data[j]) {
+                let final_byte = data[j];
+                let params_start = i + 2;
+                let should_strip = match final_byte {
+                    b'I' | b'O' => true, // Focus In / Focus Out
+                    b'c' => {
+                        // DA1 (\x1b[?..c), DA2 (\x1b[>..c), DA3 (\x1b[=..c), plain DA
+                        let first = data.get(params_start).copied();
+                        matches!(first, Some(b'?') | Some(b'>') | Some(b'='))
+                            || params_start == j
+                    }
+                    b'R' => {
+                        // Cursor Position Report: \x1b[<digits>;<digits>R
+                        data[params_start..j]
+                            .iter()
+                            .all(|&b| b.is_ascii_digit() || b == b';')
+                    }
+                    _ => false,
+                };
+                if should_strip {
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        cleaned.push(data[i]);
+        i += 1;
+    }
+    cleaned
 }
 
 fn notify_session_exited(
@@ -624,38 +737,9 @@ fn default_shell() -> String {
     }
 }
 
-#[cfg(windows)]
-fn configure_shell_command(shell_program: &str, cmd: &mut CommandBuilder) -> Result<()> {
-    let shell_name = std::path::Path::new(shell_program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.to_ascii_lowercase());
-
-    match shell_name.as_deref() {
-        Some("powershell.exe") | Some("pwsh.exe") => {
-            cmd.arg("-NoLogo");
-            cmd.arg("-NoExit");
-        }
-        _ => {}
-    }
-
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn configure_shell_command(shell_program: &str, cmd: &mut CommandBuilder) -> Result<()> {
-    let shell_name = std::path::Path::new(shell_program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.to_ascii_lowercase());
-
-    if matches!(shell_name.as_deref(), Some("bash")) {
-        let data_dir = amux_protocol::ensure_amux_data_dir()?;
-        let integration_dir = data_dir.join("shell");
-        std::fs::create_dir_all(&integration_dir)?;
-
-        let bash_rc_path = integration_dir.join("bash_amux_rc.sh");
-        let bash_rc = r#"# amux shell integration for command lifecycle markers
+/// Shell integration script that injects command lifecycle markers (OSC 133)
+/// into bash. Used on both native Unix and inside WSL on Windows.
+const BASH_AMUX_RC: &str = r#"# amux shell integration for command lifecycle markers
 if [ -f /etc/bash.bashrc ]; then
     . /etc/bash.bashrc
 fi
@@ -667,6 +751,9 @@ fi
 __amux_precmd() {
     local exit_code=$?
     printf '\033]133;D;%s\a' "$exit_code"
+    local cwd_b64
+    cwd_b64="$(printf '%s' "$PWD" | base64 | tr -d '\r\n')"
+    printf '\033]133;P;%s\a' "$cwd_b64"
 }
 
 __amux_preexec() {
@@ -692,8 +779,85 @@ else
     PROMPT_COMMAND="__amux_precmd"
 fi
 "#;
-        std::fs::write(&bash_rc_path, bash_rc)?;
 
+/// Write the bash integration RC file and return its path.
+fn ensure_bash_rc() -> Result<std::path::PathBuf> {
+    let data_dir = amux_protocol::ensure_amux_data_dir()?;
+    let integration_dir = data_dir.join("shell");
+    std::fs::create_dir_all(&integration_dir)?;
+    let bash_rc_path = integration_dir.join("bash_amux_rc.sh");
+    std::fs::write(&bash_rc_path, BASH_AMUX_RC)?;
+    Ok(bash_rc_path)
+}
+
+/// Convert a Windows path (e.g. `C:\Users\foo\bar`) to a WSL-accessible
+/// path (`/mnt/c/Users/foo/bar`).
+#[cfg(windows)]
+fn windows_path_to_wsl(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let bytes = s.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let rest = &s[3..];
+        format!("/mnt/{}/{}", drive, rest.replace('\\', "/"))
+    } else {
+        s.replace('\\', "/")
+    }
+}
+
+#[cfg(windows)]
+fn configure_shell_command(shell_program: &str, cmd: &mut CommandBuilder, cwd: Option<&str>) -> Result<()> {
+    let shell_name = std::path::Path::new(shell_program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase());
+
+    match shell_name.as_deref() {
+        Some("powershell.exe") | Some("pwsh.exe") => {
+            cmd.arg("-NoLogo");
+            cmd.arg("-NoExit");
+        }
+        Some("wsl") | Some("wsl.exe") => {
+            // Set CWD inside WSL via --cd (must come before --)
+            if let Some(dir) = cwd {
+                cmd.arg("--cd");
+                cmd.arg(dir);
+            }
+
+            // Launch bash inside WSL with amux shell integration so that
+            // command lifecycle markers work across the WSL boundary.
+            match ensure_bash_rc() {
+                Ok(rc_path) => {
+                    let wsl_rc_path = windows_path_to_wsl(&rc_path);
+                    cmd.arg("--");
+                    cmd.arg("bash");
+                    cmd.arg("--rcfile");
+                    cmd.arg(wsl_rc_path);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to write bash RC for WSL; launching without integration");
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn configure_shell_command(shell_program: &str, cmd: &mut CommandBuilder, _cwd: Option<&str>) -> Result<()> {
+    let shell_name = std::path::Path::new(shell_program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase());
+
+    if matches!(shell_name.as_deref(), Some("bash")) {
+        let bash_rc_path = ensure_bash_rc()?;
         cmd.arg("--rcfile");
         cmd.arg(bash_rc_path.to_string_lossy().to_string());
     }

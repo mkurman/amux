@@ -49,24 +49,24 @@ export function SurfaceTabBar() {
       findLeaf(activeSurface.layout, sourcePaneId)?.sessionId ?? null,
       operationalEvents,
     );
-    const targetSessionId = await cloneSessionForDuplication(sourcePaneId, sourceSessionId, {
+    const cloneResult = await cloneSessionForDuplication(sourcePaneId, sourceSessionId, {
       workspaceId: ws.id,
+      cwd: ws.cwd || null,
     });
     const sourcePaneName = activeSurface.paneNames[sourcePaneId] ?? sourcePaneId;
     const sourcePaneIcon = activeSurface.paneIcons[sourcePaneId] ?? "terminal";
 
     splitActive(direction, `${sourcePaneName} Copy`, {
-      sessionId: targetSessionId ?? null,
+      sessionId: cloneResult?.sessionId ?? null,
       paneIcon: sourcePaneIcon,
     });
 
     const duplicatedPaneId = useWorkspaceStore.getState().activePaneId();
     if (!duplicatedPaneId) return;
-    const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(sourcePaneId, operationalEvents);
-    const fallbackBootstrapCommand = !targetSessionId
-      ? resolveDuplicateBootstrapCommand(sourcePaneId, operationalEvents)
-      : null;
-    const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+    const bootstrapCommand =
+      resolveDuplicateActiveBootstrapCommand(sourcePaneId, operationalEvents)
+      ?? resolveDuplicateBootstrapCommand(sourcePaneId, operationalEvents)
+      ?? cloneResult?.activeCommand;
     if (bootstrapCommand) {
       queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
     }

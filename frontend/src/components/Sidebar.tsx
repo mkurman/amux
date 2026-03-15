@@ -478,15 +478,17 @@ export function Sidebar() {
         source.sessionId,
         operationalEvents,
       );
-      const targetSessionId = await cloneSessionForDuplication(paneId, sourceSessionId, {
+      const sourceWorkspace = workspaces.find((w) => w.id === source.workspaceId);
+      const cloneResult = await cloneSessionForDuplication(paneId, sourceSessionId, {
         workspaceId: source.workspaceId,
+        cwd: sourceWorkspace?.cwd || null,
       });
 
       if (source.layoutMode === "canvas") {
         const duplicatedPaneId = createCanvasPanel(source.surfaceId, {
           paneName: `${source.paneName} Copy`,
           paneIcon: source.paneIcon,
-          sessionId: targetSessionId ?? null,
+          sessionId: cloneResult?.sessionId ?? null,
           ...(source.panel
             ? {
               width: source.panel.width,
@@ -497,11 +499,10 @@ export function Sidebar() {
             : {}),
         });
         if (!duplicatedPaneId) continue;
-        const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents);
-        const fallbackBootstrapCommand = !targetSessionId
-          ? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
-          : null;
-        const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+        const bootstrapCommand =
+          resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents)
+          ?? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
+          ?? cloneResult?.activeCommand;
         if (bootstrapCommand) {
           queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
         }
@@ -511,15 +512,14 @@ export function Sidebar() {
 
       splitActive("horizontal", `${source.paneName} Copy`, {
         paneIcon: source.paneIcon,
-        sessionId: targetSessionId ?? null,
+        sessionId: cloneResult?.sessionId ?? null,
       });
       const duplicatedPaneId = useWorkspaceStore.getState().activePaneId();
       if (!duplicatedPaneId) continue;
-      const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents);
-      const fallbackBootstrapCommand = !targetSessionId
-        ? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
-        : null;
-      const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+      const bootstrapCommand =
+        resolveDuplicateActiveBootstrapCommand(paneId, operationalEvents)
+        ?? resolveDuplicateBootstrapCommand(paneId, operationalEvents)
+        ?? cloneResult?.activeCommand;
       if (bootstrapCommand) {
         queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
       }

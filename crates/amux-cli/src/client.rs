@@ -221,18 +221,20 @@ pub async fn clone_session(
     workspace_id: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
-) -> Result<String> {
+    cwd: Option<String>,
+) -> Result<(String, Option<String>)> {
     let source_uuid = source_id.parse().context("invalid source session ID")?;
     match roundtrip(ClientMessage::CloneSession {
         source_id: source_uuid,
         workspace_id,
         cols,
         rows,
-        replay_scrollback: true,
+        replay_scrollback: false,
+        cwd,
     })
     .await?
     {
-        DaemonMessage::SessionCloned { id, .. } => Ok(id.to_string()),
+        DaemonMessage::SessionCloned { id, active_command, .. } => Ok((id.to_string(), active_command)),
         DaemonMessage::Error { message } => anyhow::bail!("daemon error: {message}"),
         other => anyhow::bail!("unexpected response: {other:?}"),
     }
@@ -347,6 +349,17 @@ pub async fn run_bridge(
         .send(ClientMessage::GetScrollback {
             id: session_id,
             max_lines: None,
+        })
+        .await
+        .ok();
+
+    // Nudge the PTY with a resize so that shells (especially wsl.exe on Windows)
+    // redraw their prompt even if the initial output was produced before we subscribed.
+    framed
+        .send(ClientMessage::Resize {
+            id: session_id,
+            cols,
+            rows,
         })
         .await
         .ok();

@@ -51,6 +51,9 @@ enum Commands {
         /// Optional workspace override.
         #[arg(short, long)]
         workspace: Option<String>,
+        /// Fallback CWD when the source session's CWD cannot be resolved.
+        #[arg(long)]
+        cwd: Option<String>,
     },
 
     /// Kill a session.
@@ -194,9 +197,13 @@ async fn main() -> Result<()> {
             cols,
             rows,
             workspace,
+            cwd,
         } => {
-            let id = client::clone_session(&source, workspace, cols, rows).await?;
+            let (id, active_command) = client::clone_session(&source, workspace, cols, rows, cwd).await?;
             println!("{id}");
+            if let Some(cmd) = active_command {
+                println!("active_command:{cmd}");
+            }
         }
 
         Commands::Kill { id } => {

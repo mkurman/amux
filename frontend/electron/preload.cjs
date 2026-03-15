@@ -103,6 +103,7 @@ const bridgeApi = {
     checkDaemon: () => ipcRenderer.invoke('checkDaemon'),
     spawnDaemon: () => ipcRenderer.invoke('spawnDaemon'),
     getSystemFonts: () => ipcRenderer.invoke('getSystemFonts'),
+    getAvailableShells: () => ipcRenderer.invoke('getAvailableShells'),
     getSystemMonitorSnapshot: (options) => ipcRenderer.invoke('system-monitor-snapshot', options),
     getDaemonPath: () => ipcRenderer.invoke('getDaemonPath'),
     getPlatform: () => ipcRenderer.invoke('getPlatform'),

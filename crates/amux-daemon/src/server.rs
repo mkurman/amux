@@ -182,11 +182,35 @@ where
             // Select between client input and all attached session outputs.
             // For simplicity we drain all pending broadcast messages first.
             let mut forwarded = false;
-            for (_sid, rx) in attached_rxs.iter_mut() {
-                while let Ok(daemon_msg) = rx.try_recv() {
-                    framed.send(daemon_msg).await?;
-                    forwarded = true;
+            let mut closed_sessions = Vec::new();
+            for (sid, rx) in attached_rxs.iter_mut() {
+                loop {
+                    match rx.try_recv() {
+                        Ok(daemon_msg) => {
+                            framed.send(daemon_msg).await?;
+                            forwarded = true;
+                        }
+                        Err(broadcast::error::TryRecvError::Empty) => break,
+                        Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                            tracing::warn!(session = %sid, skipped = n, "broadcast lagged");
+                            break;
+                        }
+                        Err(broadcast::error::TryRecvError::Closed) => {
+                            framed
+                                .send(DaemonMessage::SessionExited {
+                                    id: *sid,
+                                    exit_code: None,
+                                })
+                                .await?;
+                            closed_sessions.push(*sid);
+                            forwarded = true;
+                            break;
+                        }
+                    }
                 }
+            }
+            if !closed_sessions.is_empty() {
+                attached_rxs.retain(|(sid, _)| !closed_sessions.contains(sid));
             }
 
             // Now try to read one client message with a short timeout so we
@@ -242,15 +266,16 @@ where
                     cols,
                     rows,
                     replay_scrollback,
+                    cwd,
                 } => {
                     match manager
-                        .clone_session(source_id, workspace_id, cols, rows, replay_scrollback)
+                        .clone_session(source_id, workspace_id, cols, rows, replay_scrollback, cwd)
                         .await
                     {
-                        Ok((id, rx)) => {
+                        Ok((id, rx, active_command)) => {
                             attached_rxs.push((id, rx));
                             framed
-                                .send(DaemonMessage::SessionCloned { source_id, id })
+                                .send(DaemonMessage::SessionCloned { source_id, id, active_command })
                                 .await?;
                         }
                         Err(e) => {
@@ -264,9 +289,17 @@ where
                 }
 
                 ClientMessage::AttachSession { id } => match manager.subscribe(id).await {
-                    Ok(rx) => {
+                    Ok((rx, alive)) => {
                         attached_rxs.push((id, rx));
                         framed.send(DaemonMessage::SessionAttached { id }).await?;
+                        if !alive {
+                            framed
+                                .send(DaemonMessage::SessionExited {
+                                    id,
+                                    exit_code: None,
+                                })
+                                .await?;
+                        }
                     }
                     Err(e) => {
                         framed

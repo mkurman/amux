@@ -44,15 +44,20 @@ export function SettingsPanel({ style, className }: SettingsPanelProps = {}) {
 
   const [tab, setTab] = useState<SettingsTab>("appearance");
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  const [availableShells, setAvailableShells] = useState<{ name: string; path: string; args?: string }[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(true);
 
   useEffect(() => {
     if (open && systemFonts.length === 0) {
       // Load system fonts via Electron IPC
       if (typeof window !== "undefined" && ("tamux" in window || "amux" in window)) {
-        ((window as any).tamux ?? (window as any).amux).getSystemFonts().then((fonts: string[]) => {
+        const bridge = (window as any).tamux ?? (window as any).amux;
+        bridge.getSystemFonts().then((fonts: string[]) => {
           setSystemFonts(fonts);
         });
+        bridge.getAvailableShells?.().then(
+          (shells: { name: string; path: string; args?: string }[]) => setAvailableShells(shells),
+        ).catch(() => {});
       }
     }
   }, [open]);
@@ -190,6 +195,7 @@ export function SettingsPanel({ style, className }: SettingsPanelProps = {}) {
             <TerminalTab
               settings={settings}
               updateSetting={updateSetting}
+              availableShells={availableShells}
               profiles={profiles}
               addProfile={addProfile}
               removeProfile={removeProfile}

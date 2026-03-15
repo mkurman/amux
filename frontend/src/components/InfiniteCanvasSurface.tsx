@@ -376,14 +376,16 @@ export function InfiniteCanvasSurface({ surface }: InfiniteCanvasSurfaceProps) {
         sourcePanel?.sessionId ?? findLeaf(surface.layout, sourcePaneId)?.sessionId ?? null,
         operationalEvents,
       );
-      const targetSessionId = await cloneSessionForDuplication(sourcePaneId, sourceSessionId, {
+      const sourceWorkspace = useWorkspaceStore.getState().workspaces.find((w) => w.id === surface.workspaceId);
+      const cloneResult = await cloneSessionForDuplication(sourcePaneId, sourceSessionId, {
         workspaceId: surface.workspaceId,
+        cwd: sourceWorkspace?.cwd || null,
       });
       setActivePaneId(sourcePaneId);
       const duplicatedPaneId = createCanvasPanel(surface.id, {
         paneName: `${surface.paneNames[sourcePaneId] ?? sourcePaneId} Copy`,
         paneIcon: surface.paneIcons[sourcePaneId] ?? "terminal",
-        sessionId: targetSessionId ?? null,
+        sessionId: cloneResult?.sessionId ?? null,
         ...(sourcePanel
           ? {
             width: sourcePanel.width,
@@ -395,11 +397,10 @@ export function InfiniteCanvasSurface({ surface }: InfiniteCanvasSurfaceProps) {
       });
       if (!duplicatedPaneId) continue;
 
-      const activeBootstrapCommand = resolveDuplicateActiveBootstrapCommand(sourcePaneId, operationalEvents);
-      const fallbackBootstrapCommand = !targetSessionId
-        ? resolveDuplicateBootstrapCommand(sourcePaneId, operationalEvents)
-        : null;
-      const bootstrapCommand = activeBootstrapCommand ?? fallbackBootstrapCommand;
+      const bootstrapCommand =
+        resolveDuplicateActiveBootstrapCommand(sourcePaneId, operationalEvents)
+        ?? resolveDuplicateBootstrapCommand(sourcePaneId, operationalEvents)
+        ?? cloneResult?.activeCommand;
       if (bootstrapCommand) {
         queuePaneBootstrapCommand(duplicatedPaneId, bootstrapCommand);
       }

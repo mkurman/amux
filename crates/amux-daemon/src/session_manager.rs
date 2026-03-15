@@ -86,7 +86,8 @@ impl SessionManager {
         cols: Option<u16>,
         rows: Option<u16>,
         replay_scrollback: bool,
-    ) -> Result<(SessionId, broadcast::Receiver<DaemonMessage>)> {
+        cwd_override: Option<String>,
+    ) -> Result<(SessionId, broadcast::Receiver<DaemonMessage>, Option<String>)> {
         let source = self
             .sessions
             .read()
@@ -95,11 +96,11 @@ impl SessionManager {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("session not found: {source_id}"))?;
 
-        let (shell, cwd, source_workspace_id, source_cols, source_rows, replay_bytes) = {
+        let (shell, cwd, source_workspace_id, source_cols, source_rows, replay_bytes, src_active_cmd) = {
             let source = source.lock().await;
             (
                 source.shell().map(ToOwned::to_owned),
-                source.resolved_cwd(),
+                source.resolved_cwd().or(cwd_override),
                 source.workspace_id().map(ToOwned::to_owned),
                 source.cols(),
                 source.rows(),
@@ -108,6 +109,7 @@ impl SessionManager {
                 } else {
                     Vec::new()
                 },
+                source.active_command(),
             )
         };
 
@@ -124,13 +126,15 @@ impl SessionManager {
             .await?;
 
         if replay_scrollback && !replay_bytes.is_empty() {
+            let sanitized =
+                crate::pty_session::sanitize_scrollback_for_replay(&replay_bytes);
             if let Some(cloned_session) = self.sessions.read().await.get(&id).cloned() {
-                cloned_session.lock().await.preload_output(&replay_bytes);
+                cloned_session.lock().await.preload_output(&sanitized);
             }
         }
 
-        tracing::info!(%source_id, %id, "session cloned");
-        Ok((id, rx))
+        tracing::info!(%source_id, %id, active_command = ?src_active_cmd, "session cloned");
+        Ok((id, rx, src_active_cmd))
     }
 
     /// Send raw input bytes to a session's PTY stdin.
@@ -176,14 +180,21 @@ impl SessionManager {
     }
 
     /// Subscribe to a session's output broadcast channel.
-    pub async fn subscribe(&self, id: SessionId) -> Result<broadcast::Receiver<DaemonMessage>> {
+    /// Returns `(receiver, alive)` where `alive` is `false` when the session's
+    /// PTY has already exited (so the caller can immediately notify the client).
+    pub async fn subscribe(
+        &self,
+        id: SessionId,
+    ) -> Result<(broadcast::Receiver<DaemonMessage>, bool)> {
         let sessions = self.sessions.read().await;
         let session = sessions
             .get(&id)
             .ok_or_else(|| anyhow::anyhow!("session not found: {id}"))?
             .clone();
-        let rx = session.lock().await.subscribe();
-        Ok(rx)
+        let s = session.lock().await;
+        let rx = s.subscribe();
+        let alive = !s.is_dead();
+        Ok((rx, alive))
     }
 
     /// List all running sessions.

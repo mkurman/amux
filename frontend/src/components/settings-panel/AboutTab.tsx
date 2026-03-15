@@ -48,7 +48,7 @@ export function AboutTab() {
             <Section title="About">
                 <div style={{ fontSize: 13, lineHeight: 1.6 }}>
                     <p style={{ fontWeight: 600, marginBottom: 8 }}>tamux - Terminal Multiplexer</p>
-                    <p>Version 0.1.1</p>
+                    <p>Version 0.1.3</p>
                     <p style={{ marginTop: 8, color: "var(--text-secondary)" }}>
                         A cross-platform terminal multiplexer with workspaces, surfaces, pane management,
                         AI agent integration, snippet library, and session persistence.
