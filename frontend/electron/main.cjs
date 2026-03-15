@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Menu, clipboard, ipcMain, screen, shell, session } = require('electron');
-const { spawn, spawnSync, execSync, execFileSync } = require('child_process');
+const { spawn, spawnSync, execSync, execFileSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const path = require('path');
 const net = require('net');
@@ -737,13 +739,26 @@ function configureChromiumRuntimePaths() {
         });
     }
 
-    // In constrained environments (WSL, locked-down profiles), GPU cache
-    // creation may fail and break UI flows like QR rendering.
-    app.disableHardwareAcceleration();
-    app.commandLine.appendSwitch('disable-gpu');
-    app.commandLine.appendSwitch('disable-gpu-compositing');
-    app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
-    app.commandLine.appendSwitch('disable-gpu-program-cache');
+    // GPU acceleration: enabled by default for smooth terminal rendering.
+    // Users can disable via settings.json { "gpuAcceleration": false } if
+    // their environment (WSL, locked-down profiles) has GPU cache issues.
+    const settingsPath = path.join(getTamuxDataDir(), 'settings.json');
+    let gpuEnabled = true;
+    try {
+        const raw = fs.readFileSync(settingsPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.gpuAcceleration === false) {
+            gpuEnabled = false;
+        }
+    } catch {}
+
+    if (!gpuEnabled) {
+        app.disableHardwareAcceleration();
+        app.commandLine.appendSwitch('disable-gpu');
+        app.commandLine.appendSwitch('disable-gpu-compositing');
+        app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+        app.commandLine.appendSwitch('disable-gpu-program-cache');
+    }
 }
 
 function resolveDataPath(relativePath) {
@@ -771,10 +786,10 @@ function readJsonFile(relativePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function writeJsonFile(relativePath, data) {
+async function writeJsonFile(relativePath, data) {
     const filePath = resolveDataPath(relativePath);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
     return true;
 }
 
@@ -787,10 +802,10 @@ function readTextFile(relativePath) {
     return fs.readFileSync(filePath, 'utf8');
 }
 
-function writeTextFile(relativePath, content) {
+async function writeTextFile(relativePath, content) {
     const filePath = resolveDataPath(relativePath);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, typeof content === 'string' ? content : '', 'utf8');
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(filePath, typeof content === 'string' ? content : '', 'utf8');
     return true;
 }
 
@@ -2520,11 +2535,11 @@ function getCpuUsagePercent() {
     return Number((((totalDelta - idleDelta) / totalDelta) * 100).toFixed(1));
 }
 
-function getSwapStats() {
+async function getSwapStats() {
     try {
         if (process.platform === 'linux') {
-            const output = execSync('free -b', { encoding: 'utf8', timeout: 5000 });
-            const swapLine = output.split('\n').find((line) => line.trim().startsWith('Swap:'));
+            const { stdout } = await execFileAsync('free', ['-b'], { encoding: 'utf8', timeout: 5000 });
+            const swapLine = stdout.split('\n').find((line) => line.trim().startsWith('Swap:'));
             if (!swapLine) return null;
 
             const parts = swapLine.trim().split(/\s+/);
@@ -2541,14 +2556,15 @@ function getSwapStats() {
     return null;
 }
 
-function getGpuStats() {
+async function getGpuStats() {
     try {
-        const output = execSync(
-            'nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits',
+        const { stdout } = await execFileAsync(
+            'nvidia-smi',
+            ['--query-gpu=name,memory.used,memory.total,utilization.gpu', '--format=csv,noheader,nounits'],
             { encoding: 'utf8', timeout: 5000, windowsHide: true }
         );
 
-        return output
+        return stdout
             .split('\n')
             .map((line) => line.trim())
             .filter(Boolean)
@@ -2567,16 +2583,21 @@ function getGpuStats() {
     }
 }
 
-function getTopProcesses(limit = 24) {
+async function getTopProcesses(limit = 24) {
     const safeLimit = Math.max(8, Math.min(64, Number(limit) || 24));
 
     try {
         if (process.platform === 'win32') {
-            const command = `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,Name,WorkingSetSize,CommandLine | Sort-Object WorkingSetSize -Descending | Select-Object -First ${safeLimit} | ConvertTo-Json -Compress"`;
-            const output = execSync(command, { encoding: 'utf8', timeout: 10000, windowsHide: true }).trim();
-            if (!output) return [];
+            const psCommand = `Get-CimInstance Win32_Process | Select-Object ProcessId,Name,WorkingSetSize,CommandLine | Sort-Object WorkingSetSize -Descending | Select-Object -First ${safeLimit} | ConvertTo-Json -Compress`;
+            const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', psCommand], {
+                encoding: 'utf8',
+                timeout: 10000,
+                windowsHide: true,
+            });
+            const trimmed = stdout.trim();
+            if (!trimmed) return [];
 
-            const parsed = JSON.parse(output);
+            const parsed = JSON.parse(trimmed);
             const items = Array.isArray(parsed) ? parsed : [parsed];
 
             return items.map((item) => ({
@@ -2589,12 +2610,12 @@ function getTopProcesses(limit = 24) {
             }));
         }
 
-        const output = execSync(`ps -eo pid=,comm=,%cpu=,rss=,state=,args= --sort=-%cpu | head -n ${safeLimit + 1}`, {
+        const { stdout } = await execFileAsync('sh', ['-c', `ps -eo pid=,comm=,%cpu=,rss=,state=,args= --sort=-%cpu | head -n ${safeLimit + 1}`], {
             encoding: 'utf8',
             timeout: 10000,
         });
 
-        return output
+        return stdout
             .split('\n')
             .map((line) => line.trim())
             .filter(Boolean)
@@ -2617,14 +2638,19 @@ function getTopProcesses(limit = 24) {
     }
 }
 
-function getSystemMonitorSnapshot(_event, options = {}) {
+async function getSystemMonitorSnapshot(_event, options = {}) {
     const cpus = os.cpus();
     const totalMemoryBytes = os.totalmem();
     const freeMemoryBytes = os.freemem();
     const usedMemoryBytes = totalMemoryBytes - freeMemoryBytes;
-    const swap = getSwapStats();
-    const gpus = getGpuStats();
     const processLimit = options && typeof options === 'object' ? options.processLimit : undefined;
+
+    // Run external commands concurrently instead of sequentially blocking
+    const [swap, gpus, processes] = await Promise.all([
+        getSwapStats(),
+        getGpuStats(),
+        getTopProcesses(processLimit),
+    ]);
 
     return {
         timestamp: Date.now(),
@@ -2646,7 +2672,7 @@ function getSystemMonitorSnapshot(_event, options = {}) {
             swapFreeBytes: swap?.freeBytes ?? null,
         },
         gpus,
-        processes: getTopProcesses(processLimit),
+        processes,
     };
 }
 
@@ -2751,10 +2777,10 @@ function registerIpcHandlers() {
         if (!fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) return null;
         return fs.readFileSync(resolved, 'utf8');
     });
-    ipcMain.handle('fs-write-text', (_event, targetPath, content) => {
+    ipcMain.handle('fs-write-text', async (_event, targetPath, content) => {
         const resolved = resolveFsPath(targetPath);
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        fs.writeFileSync(resolved, typeof content === 'string' ? content : '', 'utf8');
+        await fs.promises.mkdir(path.dirname(resolved), { recursive: true });
+        await fs.promises.writeFile(resolved, typeof content === 'string' ? content : '', 'utf8');
         return true;
     });
     ipcMain.handle('fs-path-info', (_event, targetPath) => getFsPathInfo(targetPath));

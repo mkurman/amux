@@ -183,6 +183,11 @@ function stripAnsi(text: string): string {
 }
 
 function extractCognitiveSegments(text: string): Array<{ source: "inner-monologue" | "scratchpad"; content: string }> {
+    // Fast path: skip expensive regex work when tags can't possibly be present
+    if (!text.includes("<INNER_MONOLOGUE>") && !text.includes("<SCRATCHPAD>")) {
+        return [];
+    }
+
     const cleaned = stripAnsi(text);
     const matches: Array<{ source: "inner-monologue" | "scratchpad"; content: string }> = [];
     const patterns: Array<{ source: "inner-monologue" | "scratchpad"; regex: RegExp }> = [

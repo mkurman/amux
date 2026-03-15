@@ -184,6 +184,9 @@ export interface AmuxSettings {
   visualBell: boolean;
   bracketedPaste: boolean;
 
+  // Performance
+  gpuAcceleration: boolean;
+
   // Behavior
   restoreSessionOnStartup: boolean;
   confirmOnClose: boolean;
@@ -231,6 +234,7 @@ export const DEFAULT_SETTINGS: AmuxSettings = {
   opacity: 1.0,
   lineHeight: 1.0,
   padding: 0,
+  gpuAcceleration: true,
   cursorStyle: "bar",
   cursorBlink: true,
   cursorBlinkMs: 530,

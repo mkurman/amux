@@ -59,7 +59,10 @@ export function useTerminalTranscript({
         const serializeAddon = serializeAddonRef.current;
         if (!term || !serializeAddon) return;
 
-        const content = stripAnsi(serializeAddon.serialize()).trim();
+        // Limit serialization to the last 500 rows to avoid blocking the main
+        // thread on large scrollback buffers. The full serialize + stripAnsi
+        // path was a major source of input lag.
+        const content = stripAnsi(serializeAddon.serialize({ scrollback: 500 })).trim();
         if (!content) return;
 
         upsertLiveTranscript({
