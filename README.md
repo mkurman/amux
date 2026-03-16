@@ -200,6 +200,7 @@ All providers use OpenAI-compatible chat completion endpoints. Switch providers 
 
 - [Building CDUI Components And Views With YAML](docs/cdui-yaml-views.md)
 - [Creating Your Own tamux Plugin](docs/plugin-development.md)
+- [Getting Started Guide](docs/getting-started.md)
 
 Runtime-installed plugins are now supported through `tamux install plugin <npm-package-or-local-path>`.
 
@@ -212,12 +213,33 @@ External npm plugins should declare a `tamuxPlugin` field in their `package.json
 - **Rust** 1.75+ (2021 edition) with `cargo` -- https://rustup.rs
 - **Node.js** 18+ with `npm` -- https://nodejs.org
 - **Electron** 33+ (installed automatically via npm)
+- **uv** (`aline` is optional but recommended for OneContext recall features)
 
 Optional system dependencies:
 
 - `criu` binary for checkpoint/restore (Linux only, requires root privileges)
 - ZFS or BTRFS filesystem for copy-on-write snapshots
 - Cerbos PDP for external policy evaluation
+
+### Setup Preflight
+
+Run dependency checks before building or running:
+
+```bash
+./scripts/setup.sh --check --profile source
+```
+
+For desktop runtime-only checks:
+
+```bash
+./scripts/setup.sh --check --profile desktop
+```
+
+On Windows PowerShell:
+
+```powershell
+.\scripts\setup.ps1 -Check -Profile source
+```
 
 ### Build
 
@@ -324,6 +346,7 @@ dist-release/
     tamux-daemon
     tamux-gateway
     tamux-mcp
+    GETTING_STARTED.md
     tamux-<version>.AppImage
     tamux_<version>_amd64.deb
     tamux-<version>-linux-x86_64.zip
@@ -334,6 +357,7 @@ dist-release/
     tamux-daemon.exe
     tamux-gateway.exe
     tamux-mcp.exe
+    GETTING_STARTED.md
     tamux-portable.exe
     tamux Setup <version>.exe
     tamux-<version>-windows-x64.zip

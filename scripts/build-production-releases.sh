@@ -86,6 +86,10 @@ echo "============================================================"
 echo ""
 echo "This will recreate $DIST_DIR from scratch."
 
+echo ""
+echo "[preflight] Running setup checks..."
+"$SCRIPT_DIR/setup.sh" --check --profile source --format text
+
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 

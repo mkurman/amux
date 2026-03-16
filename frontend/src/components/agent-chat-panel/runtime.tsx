@@ -159,6 +159,8 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
             api_key: pc?.apiKey || "",
             system_prompt: agentSettings.systemPrompt,
             max_tool_loops: agentSettings.maxToolLoops,
+            max_retries: agentSettings.maxRetries,
+            retry_delay_ms: agentSettings.retryDelayMs,
             tools: {
                 bash: agentSettings.enableBashTool,
                 web_search: agentSettings.enableWebSearchTool,
@@ -212,6 +214,7 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
                             totalTokens: (event.input_tokens ?? 0) + (event.output_tokens ?? 0),
                             provider: event.provider || undefined,
                             model: event.model || undefined,
+                            tps: typeof event.tps === "number" ? event.tps : undefined,
                         });
                     }
                     break;
@@ -444,6 +447,14 @@ export function AgentChatPanelProvider({ children }: { children?: React.ReactNod
     function stopStreaming(threadId?: string | null) {
         const targetThreadId = threadId ?? activeThreadId;
         if (!targetThreadId) return;
+
+        if (agentSettings.agentBackend !== "legacy") {
+            const amux = (window as any).tamux ?? (window as any).amux;
+            const daemonTid = daemonThreadIdRef.current;
+            if (daemonTid && amux?.agentStopStream) {
+                void amux.agentStopStream(daemonTid);
+            }
+        }
 
         abortThreadStream(targetThreadId);
         if (abortRef.current) {

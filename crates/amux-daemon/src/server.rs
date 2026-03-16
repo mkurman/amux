@@ -92,7 +92,11 @@ async fn run_unix(manager: Arc<SessionManager>, agent: Arc<AgentEngine>) -> Resu
 }
 
 #[cfg(unix)]
-async fn accept_loop_unix(listener: tokio::net::UnixListener, manager: Arc<SessionManager>, agent: Arc<AgentEngine>) {
+async fn accept_loop_unix(
+    listener: tokio::net::UnixListener,
+    manager: Arc<SessionManager>,
+    agent: Arc<AgentEngine>,
+) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -154,7 +158,11 @@ async fn run_tcp_fallback(manager: Arc<SessionManager>, agent: Arc<AgentEngine>)
 }
 
 #[allow(dead_code)]
-async fn accept_loop_tcp(listener: tokio::net::TcpListener, manager: Arc<SessionManager>, agent: Arc<AgentEngine>) {
+async fn accept_loop_tcp(
+    listener: tokio::net::TcpListener,
+    manager: Arc<SessionManager>,
+    agent: Arc<AgentEngine>,
+) {
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
@@ -178,7 +186,11 @@ async fn accept_loop_tcp(listener: tokio::net::TcpListener, manager: Arc<Session
 // Connection handler — generic over any AsyncRead + AsyncWrite stream
 // ---------------------------------------------------------------------------
 
-async fn handle_connection<S>(stream: S, manager: Arc<SessionManager>, agent: Arc<AgentEngine>) -> Result<()>
+async fn handle_connection<S>(
+    stream: S,
+    manager: Arc<SessionManager>,
+    agent: Arc<AgentEngine>,
+) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -199,7 +211,9 @@ where
                 match rx.try_recv() {
                     Ok(event) => {
                         if let Ok(json) = serde_json::to_string(&event) {
-                            framed.send(DaemonMessage::AgentEvent { event_json: json }).await?;
+                            framed
+                                .send(DaemonMessage::AgentEvent { event_json: json })
+                                .await?;
                         }
                     }
                     Err(broadcast::error::TryRecvError::Lagged(n)) => {
@@ -317,7 +331,11 @@ where
                         Ok((id, rx, active_command)) => {
                             attached_rxs.push((id, rx));
                             framed
-                                .send(DaemonMessage::SessionCloned { source_id, id, active_command })
+                                .send(DaemonMessage::SessionCloned {
+                                    source_id,
+                                    id,
+                                    active_command,
+                                })
                                 .await?;
                         }
                         Err(e) => {
@@ -627,7 +645,6 @@ where
                 // -----------------------------------------------------------
                 // Agent engine messages
                 // -----------------------------------------------------------
-
                 ClientMessage::AgentSendMessage { thread_id, content } => {
                     let agent = agent.clone();
                     let event_tx = agent.event_sender();
@@ -641,27 +658,35 @@ where
                     });
                 }
 
-                ClientMessage::AgentStopStream { .. } => {
-                    // TODO: implement abort via cancellation token per thread
+                ClientMessage::AgentStopStream { thread_id } => {
+                    let _ = agent.stop_stream(&thread_id).await;
                 }
 
                 ClientMessage::AgentListThreads => {
                     let threads = agent.list_threads().await;
                     let json = serde_json::to_string(&threads).unwrap_or_default();
-                    framed.send(DaemonMessage::AgentThreadList { threads_json: json }).await?;
+                    framed
+                        .send(DaemonMessage::AgentThreadList { threads_json: json })
+                        .await?;
                 }
 
                 ClientMessage::AgentGetThread { thread_id } => {
                     let thread = agent.get_thread(&thread_id).await;
                     let json = serde_json::to_string(&thread).unwrap_or_default();
-                    framed.send(DaemonMessage::AgentThreadDetail { thread_json: json }).await?;
+                    framed
+                        .send(DaemonMessage::AgentThreadDetail { thread_json: json })
+                        .await?;
                 }
 
                 ClientMessage::AgentDeleteThread { thread_id } => {
                     agent.delete_thread(&thread_id).await;
                 }
 
-                ClientMessage::AgentAddTask { title, description, priority } => {
+                ClientMessage::AgentAddTask {
+                    title,
+                    description,
+                    priority,
+                } => {
                     let task_id = agent.add_task(title, description, &priority).await;
                     tracing::info!(%task_id, "agent task added");
                 }
@@ -673,20 +698,28 @@ where
                 ClientMessage::AgentListTasks => {
                     let tasks = agent.list_tasks().await;
                     let json = serde_json::to_string(&tasks).unwrap_or_default();
-                    framed.send(DaemonMessage::AgentTaskList { tasks_json: json }).await?;
+                    framed
+                        .send(DaemonMessage::AgentTaskList { tasks_json: json })
+                        .await?;
                 }
 
                 ClientMessage::AgentGetConfig => {
                     let config = agent.get_config().await;
                     let json = serde_json::to_string(&config).unwrap_or_default();
-                    framed.send(DaemonMessage::AgentConfigResponse { config_json: json }).await?;
+                    framed
+                        .send(DaemonMessage::AgentConfigResponse { config_json: json })
+                        .await?;
                 }
 
                 ClientMessage::AgentSetConfig { config_json } => {
                     match serde_json::from_str(&config_json) {
                         Ok(config) => agent.set_config(config).await,
                         Err(e) => {
-                            framed.send(DaemonMessage::Error { message: format!("Invalid config: {e}") }).await?;
+                            framed
+                                .send(DaemonMessage::Error {
+                                    message: format!("Invalid config: {e}"),
+                                })
+                                .await?;
                         }
                     }
                 }
@@ -694,14 +727,20 @@ where
                 ClientMessage::AgentHeartbeatGetItems => {
                     let items = agent.get_heartbeat_items().await;
                     let json = serde_json::to_string(&items).unwrap_or_default();
-                    framed.send(DaemonMessage::AgentHeartbeatItems { items_json: json }).await?;
+                    framed
+                        .send(DaemonMessage::AgentHeartbeatItems { items_json: json })
+                        .await?;
                 }
 
                 ClientMessage::AgentHeartbeatSetItems { items_json } => {
                     match serde_json::from_str(&items_json) {
                         Ok(items) => agent.set_heartbeat_items(items).await,
                         Err(e) => {
-                            framed.send(DaemonMessage::Error { message: format!("Invalid heartbeat items: {e}") }).await?;
+                            framed
+                                .send(DaemonMessage::Error {
+                                    message: format!("Invalid heartbeat items: {e}"),
+                                })
+                                .await?;
                         }
                     }
                 }

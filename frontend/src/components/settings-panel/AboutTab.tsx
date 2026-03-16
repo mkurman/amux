@@ -1,9 +1,35 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { isCDUIEnabled, setCDUIEnabled } from "../../lib/cduiMode";
 import { Section, SettingRow, Toggle, smallBtnStyle } from "./shared";
 
+function defaultViewsPathLabel(): string {
+    if (typeof navigator !== "undefined") {
+        const ua = navigator.userAgent.toLowerCase();
+        if (ua.includes("windows")) {
+            return "%LOCALAPPDATA%\\tamux\\views";
+        }
+        if (ua.includes("mac")) {
+            return "~/Library/Application Support/tamux/views";
+        }
+    }
+    return "~/.tamux/views";
+}
+
 export function AboutTab() {
     const [cduiEnabled, setCduiEnabledState] = useState<boolean>(() => isCDUIEnabled());
+    const [viewsPathLabel, setViewsPathLabel] = useState<string>(() => defaultViewsPathLabel());
+
+    useEffect(() => {
+        const bridge = (window as any).tamux ?? (window as any).amux;
+        if (!bridge?.getDataDir) return;
+        bridge.getDataDir()
+            .then((dataDir: string) => {
+                if (typeof dataDir !== "string" || !dataDir.trim()) return;
+                const separator = dataDir.includes("\\") ? "\\" : "/";
+                setViewsPathLabel(`${dataDir}${separator}views`);
+            })
+            .catch(() => {});
+    }, []);
 
     const applyRuntimeMode = () => {
         setCDUIEnabled(cduiEnabled);
@@ -18,7 +44,7 @@ export function AboutTab() {
                 </SettingRow>
                 <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                     <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                        CDUI is now the default interface. Turn it off here to reload into the legacy UI, or turn it back on to use YAML-driven views from ~/.tamux/views.
+                        CDUI is now the default interface. Turn it off here to reload into the legacy UI, or turn it back on to use YAML-driven views from {viewsPathLabel}.
                     </span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <button
@@ -27,7 +53,7 @@ export function AboutTab() {
                             }}
                             style={smallBtnStyle}
                         >
-                            Open ~/.tamux/views
+                            Open {viewsPathLabel}
                         </button>
                         <button
                             onClick={() => {
@@ -40,6 +66,15 @@ export function AboutTab() {
                         </button>
                         <button onClick={applyRuntimeMode} style={smallBtnStyle}>
                             Apply & Reload
+                        </button>
+                        <button
+                            onClick={() => {
+                                window.dispatchEvent(new Event("tamux-open-setup-onboarding"));
+                                window.dispatchEvent(new Event("amux-open-setup-onboarding"));
+                            }}
+                            style={smallBtnStyle}
+                        >
+                            Open Setup Assistant
                         </button>
                     </div>
                 </div>

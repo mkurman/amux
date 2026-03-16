@@ -5,6 +5,7 @@ import { StatusBar } from "./components/StatusBar";
 import { Sidebar } from "./components/Sidebar";
 import { TitleBar } from "./components/TitleBar";
 import { AgentApprovalOverlay } from "./components/AgentApprovalOverlay";
+import { SetupOnboardingPanel } from "./components/SetupOnboardingPanel";
 import { useAgentMissionStore } from "./lib/agentMissionStore";
 import { clearThreadAbortController, setThreadAbortController, useAgentStore } from "./lib/agentStore";
 import { applyAppShellTheme, getAppShellTheme } from "./lib/themes";
@@ -807,6 +808,7 @@ export default function App() {
         {canvasOpen && <ExecutionCanvas />}
       </Suspense>
 
+      <SetupOnboardingPanel />
       <AgentApprovalOverlay />
     </div>
   );

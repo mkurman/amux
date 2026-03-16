@@ -107,6 +107,7 @@ const bridgeApi = {
     getSystemMonitorSnapshot: (options) => ipcRenderer.invoke('system-monitor-snapshot', options),
     getDaemonPath: () => ipcRenderer.invoke('getDaemonPath'),
     getPlatform: () => ipcRenderer.invoke('getPlatform'),
+    checkSetupPrereqs: (profile) => ipcRenderer.invoke('setup-check-prereqs', profile),
     discoverCodingAgents: () => ipcRenderer.invoke('coding-agents-discover'),
     discoverAITraining: (workspacePath) => ipcRenderer.invoke('ai-training-discover', workspacePath),
     listInstalledPlugins: () => ipcRenderer.invoke('plugin-list-installed'),

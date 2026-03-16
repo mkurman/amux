@@ -8,8 +8,10 @@ use anyhow::{Context, Result};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::pin::Pin;
 use std::task::Poll;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::types::{CompletionChunk, ProviderConfig, ToolCall, ToolDefinition, ToolFunction};
@@ -59,6 +61,20 @@ pub struct CompletionStream {
     rx: mpsc::Receiver<Result<CompletionChunk>>,
 }
 
+#[derive(Debug)]
+struct RateLimitError {
+    provider: String,
+    details: String,
+}
+
+impl fmt::Display for RateLimitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} API returned 429: {}", self.provider, self.details)
+    }
+}
+
+impl std::error::Error for RateLimitError {}
+
 impl Stream for CompletionStream {
     type Item = Result<CompletionChunk>;
 
@@ -86,6 +102,8 @@ pub fn send_chat_completion(
     system_prompt: &str,
     messages: &[ApiMessage],
     tools: &[ToolDefinition],
+    max_retries: u32,
+    retry_delay_ms: u64,
 ) -> CompletionStream {
     let (tx, rx) = mpsc::channel(64);
     let client = client.clone();
@@ -96,21 +114,49 @@ pub fn send_chat_completion(
     let tools = tools.to_vec();
 
     tokio::spawn(async move {
-        let result = if provider == "anthropic" {
-            run_anthropic(&client, &config, &system_prompt, &messages, &tools, &tx).await
-        } else {
-            run_openai_compatible(
-                &client, &provider, &config, &system_prompt, &messages, &tools, &tx,
-            )
-            .await
-        };
+        let mut retry_attempt = 0u32;
+        loop {
+            let result = if provider == "anthropic" {
+                run_anthropic(&client, &config, &system_prompt, &messages, &tools, &tx).await
+            } else {
+                run_openai_compatible(
+                    &client,
+                    &provider,
+                    &config,
+                    &system_prompt,
+                    &messages,
+                    &tools,
+                    &tx,
+                )
+                .await
+            };
 
-        if let Err(e) = result {
-            let _ = tx
-                .send(Ok(CompletionChunk::Error {
-                    message: format!("API error: {e}"),
-                }))
-                .await;
+            match result {
+                Ok(()) => break,
+                Err(e) => {
+                    let is_rate_limited = e.downcast_ref::<RateLimitError>().is_some();
+                    if is_rate_limited && retry_attempt < max_retries {
+                        retry_attempt += 1;
+                        let _ = tx
+                            .send(Ok(CompletionChunk::Retry {
+                                attempt: retry_attempt,
+                                max_retries,
+                                delay_ms: retry_delay_ms,
+                            }))
+                            .await;
+                        tokio::time::sleep(Duration::from_millis(retry_delay_ms)).await;
+                        continue;
+                    }
+
+                    let message = if let Some(rate_limit) = e.downcast_ref::<RateLimitError>() {
+                        rate_limit.to_string()
+                    } else {
+                        format!("API error: {e}")
+                    };
+                    let _ = tx.send(Ok(CompletionChunk::Error { message })).await;
+                    break;
+                }
+            }
         }
     });
 
@@ -118,9 +164,7 @@ pub fn send_chat_completion(
 }
 
 /// Convert `AgentMessage` history to API format.
-pub fn messages_to_api_format(
-    messages: &[super::types::AgentMessage],
-) -> Vec<ApiMessage> {
+pub fn messages_to_api_format(messages: &[super::types::AgentMessage]) -> Vec<ApiMessage> {
     messages
         .iter()
         .filter(|m| {
@@ -229,6 +273,13 @@ async fn run_openai_compatible(
             .chars()
             .take(200)
             .collect::<String>();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(RateLimitError {
+                provider: provider.to_string(),
+                details: text,
+            }
+            .into());
+        }
         anyhow::bail!("{provider} API returned {status}: {text}");
     }
 
@@ -498,6 +549,13 @@ async fn run_anthropic(
             .chars()
             .take(200)
             .collect::<String>();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(RateLimitError {
+                provider: "Anthropic".to_string(),
+                details: text,
+            }
+            .into());
+        }
         anyhow::bail!("Anthropic API returned {status}: {text}");
     }
 
@@ -540,10 +598,7 @@ async fn parse_anthropic_sse(
                 Err(_) => continue,
             };
 
-            let event_type = parsed
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let event_type = parsed.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
             match event_type {
                 "message_start" => {

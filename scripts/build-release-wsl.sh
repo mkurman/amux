@@ -136,6 +136,10 @@ if ! rustup target list --installed | grep -q "$TARGET"; then
 fi
 echo "  Rust target: $TARGET OK"
 
+echo ""
+echo "  Running tamux setup preflight..."
+"$SCRIPT_DIR/setup.sh" --check --profile source --format text
+
 # -----------------------------------------------------------
 # Step 1: Cross-compile Rust
 # -----------------------------------------------------------
@@ -175,6 +179,11 @@ done
 # Copy daemon + CLI to frontend/dist for Electron
 cp "$OUT_DIR/tamux-daemon.exe" "$PROJECT_ROOT/frontend/dist/" 2>/dev/null || true
 cp "$OUT_DIR/tamux.exe" "$PROJECT_ROOT/frontend/dist/" 2>/dev/null || true
+if [[ -f "$PROJECT_ROOT/docs/getting-started.md" ]]; then
+    cp "$PROJECT_ROOT/docs/getting-started.md" "$OUT_DIR/GETTING_STARTED.md"
+    cp "$PROJECT_ROOT/docs/getting-started.md" "$PROJECT_ROOT/frontend/dist/GETTING_STARTED.md"
+    echo "  Collected GETTING_STARTED.md"
+fi
 
 # -----------------------------------------------------------
 # Step 4: Code signing (optional)

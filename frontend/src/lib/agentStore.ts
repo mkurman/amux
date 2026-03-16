@@ -163,6 +163,8 @@ export interface AgentSettings {
   autoCompactContext: boolean;
   maxContextMessages: number;
   maxToolLoops: number;
+  maxRetries: number;
+  retryDelayMs: number;
   contextBudgetTokens: number;
   compactThresholdPercent: number;
   keepRecentOnCompaction: number;
@@ -218,6 +220,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   autoCompactContext: true,
   maxContextMessages: 100,
   maxToolLoops: 25,
+  maxRetries: 3,
+  retryDelayMs: 2000,
   contextBudgetTokens: 100000,
   compactThresholdPercent: 80,
   keepRecentOnCompaction: 10,

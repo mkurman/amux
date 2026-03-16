@@ -6,15 +6,32 @@
 //! connections.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use super::types::AgentEvent;
 
 /// Maximum time (seconds) to wait for a one-shot agent response.
 const ONE_SHOT_TIMEOUT_SECS: u64 = 300;
+
+#[derive(Debug)]
+struct StreamCancelledError;
+
+impl std::fmt::Display for StreamCancelledError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("stream cancelled")
+    }
+}
+
+impl std::error::Error for StreamCancelledError {}
+
+pub fn is_stream_cancelled(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<StreamCancelledError>().is_some()
+}
 
 // ---------------------------------------------------------------------------
 // External agent runner
@@ -77,7 +94,13 @@ impl ExternalAgentRunner {
     ///
     /// Spawns the agent CLI in one-shot mode, reads stdout line-by-line to
     /// stream deltas, strips TUI noise, and enforces a timeout.
-    pub async fn send_message(&self, thread_id: &str, prompt: &str) -> Result<String> {
+    pub async fn send_message(
+        &self,
+        thread_id: &str,
+        prompt: &str,
+        cancel_token: Option<CancellationToken>,
+    ) -> Result<String> {
+        let request_started_at = Instant::now();
         let exe = self
             .executable
             .as_deref()
@@ -113,57 +136,83 @@ impl ExternalAgentRunner {
         // OpenClaw with --json outputs structured JSON — collect raw without noise filtering
         let is_json_mode = agent_type == "openclaw";
 
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(ONE_SHOT_TIMEOUT_SECS),
-            async {
-                let mut reader = BufReader::new(stdout).lines();
-                let mut collected = Vec::<String>::new();
+        let read_future = async {
+            let mut reader = BufReader::new(stdout).lines();
+            let mut collected = Vec::<String>::new();
+            let mut first_output_at: Option<Instant> = None;
 
-                while let Some(line) = reader.next_line().await? {
-                    if is_json_mode {
-                        // Collect raw JSON lines without filtering
-                        collected.push(line);
-                    } else {
-                        let clean = strip_ansi(&line);
-                        let clean = clean.trim();
-
-                        if clean.is_empty() || is_tui_noise(clean) {
-                            continue;
-                        }
-
-                        collected.push(clean.to_string());
-
-                        // Stream each line as a delta event (for Hermes)
-                        let content = if collected.len() > 1 {
-                            format!("\n{clean}")
-                        } else {
-                            clean.to_string()
-                        };
-                        let _ = event_tx.send(AgentEvent::Delta {
-                            thread_id: tid.clone(),
-                            content,
-                        });
+            while let Some(line) = reader.next_line().await? {
+                if is_json_mode {
+                    // Collect raw JSON lines without filtering
+                    if first_output_at.is_none() && !line.trim().is_empty() {
+                        first_output_at = Some(Instant::now());
                     }
-                }
-
-                // Also capture stderr for error context
-                let mut stderr_reader = BufReader::new(stderr).lines();
-                let mut stderr_lines = Vec::new();
-                while let Some(line) = stderr_reader.next_line().await? {
+                    collected.push(line);
+                } else {
                     let clean = strip_ansi(&line);
-                    let trimmed = clean.trim();
-                    if !trimmed.is_empty() {
-                        stderr_lines.push(trimmed.to_string());
-                    }
-                }
+                    let clean = clean.trim();
 
-                Ok::<(Vec<String>, Vec<String>), anyhow::Error>((collected, stderr_lines))
-            },
-        )
-        .await;
+                    if clean.is_empty() || is_tui_noise(clean) {
+                        continue;
+                    }
+
+                    if first_output_at.is_none() {
+                        first_output_at = Some(Instant::now());
+                    }
+                    collected.push(clean.to_string());
+
+                    // Stream each line as a delta event (for Hermes)
+                    let content = if collected.len() > 1 {
+                        format!("\n{clean}")
+                    } else {
+                        clean.to_string()
+                    };
+                    let _ = event_tx.send(AgentEvent::Delta {
+                        thread_id: tid.clone(),
+                        content,
+                    });
+                }
+            }
+
+            // Also capture stderr for error context
+            let mut stderr_reader = BufReader::new(stderr).lines();
+            let mut stderr_lines = Vec::new();
+            while let Some(line) = stderr_reader.next_line().await? {
+                let clean = strip_ansi(&line);
+                let trimmed = clean.trim();
+                if !trimmed.is_empty() {
+                    stderr_lines.push(trimmed.to_string());
+                }
+            }
+
+            Ok::<(Vec<String>, Vec<String>, Option<Instant>), anyhow::Error>((
+                collected,
+                stderr_lines,
+                first_output_at,
+            ))
+        };
+
+        let result = if let Some(token) = cancel_token.as_ref() {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    let _ = child.kill().await;
+                    return Err(StreamCancelledError.into());
+                }
+                timed = tokio::time::timeout(
+                    std::time::Duration::from_secs(ONE_SHOT_TIMEOUT_SECS),
+                    read_future
+                ) => timed,
+            }
+        } else {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(ONE_SHOT_TIMEOUT_SECS),
+                read_future,
+            )
+            .await
+        };
 
         // Handle timeout
-        let (collected, stderr_lines) = match result {
+        let (collected, stderr_lines, first_output_at) = match result {
             Ok(Ok(data)) => data,
             Ok(Err(e)) => {
                 // Kill the process on IO error
@@ -189,7 +238,17 @@ impl ExternalAgentRunner {
         };
 
         // Wait for process exit
-        let status = child.wait().await?;
+        let status = if let Some(token) = cancel_token.as_ref() {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    let _ = child.kill().await;
+                    return Err(StreamCancelledError.into());
+                }
+                status = child.wait() => status?,
+            }
+        } else {
+            child.wait().await?
+        };
 
         if !status.success() && collected.is_empty() {
             let error_msg = if stderr_lines.is_empty() {
@@ -216,6 +275,16 @@ impl ExternalAgentRunner {
 
         // Parse structured JSON output (OpenClaw --json) or use raw text
         let parsed = parse_structured_response(&self.agent_type, &raw_output);
+        let generation_secs = first_output_at
+            .unwrap_or(request_started_at)
+            .elapsed()
+            .as_secs_f64();
+        let generation_ms = Some((generation_secs * 1000.0).round() as u64);
+        let tps = if parsed.output_tokens > 0 && generation_secs > 0.0 {
+            Some(parsed.output_tokens as f64 / generation_secs)
+        } else {
+            None
+        };
 
         // For JSON-mode agents, emit the parsed text as a delta now
         if is_json_mode && !parsed.text.is_empty() {
@@ -233,6 +302,8 @@ impl ExternalAgentRunner {
             cost: None,
             provider: parsed.provider.or_else(|| Some(self.agent_type.clone())),
             model: parsed.model,
+            tps,
+            generation_ms,
         });
 
         tracing::info!(
@@ -445,7 +516,12 @@ fn is_tui_noise(line: &str) -> bool {
         return true;
     }
     // Lines that end with box chars
-    if s.ends_with('╮') || s.ends_with('╯') || s.ends_with('│') || s.ends_with('┐') || s.ends_with('┘') {
+    if s.ends_with('╮')
+        || s.ends_with('╯')
+        || s.ends_with('│')
+        || s.ends_with('┐')
+        || s.ends_with('┘')
+    {
         return true;
     }
     // Horizontal rules made of box-drawing
@@ -485,7 +561,11 @@ fn is_tui_noise(line: &str) -> bool {
     }
 
     // Hermes-specific decorations
-    if s.starts_with("Query:") || s.contains("Hermes Agent v") || s.contains("Available Tools") || s.contains("Available Skills") {
+    if s.starts_with("Query:")
+        || s.contains("Hermes Agent v")
+        || s.contains("Available Tools")
+        || s.contains("Available Skills")
+    {
         return true;
     }
     if s.contains("Session:") && s.len() < 60 {
@@ -528,7 +608,11 @@ fn is_tui_noise(line: &str) -> bool {
     if s.starts_with("Resume this session with:") || s.starts_with("hermes --resume") {
         return true;
     }
-    if s.starts_with("Duration:") || s.starts_with("Messages:") || s.starts_with("Session:") || s.starts_with("session_id:") {
+    if s.starts_with("Duration:")
+        || s.starts_with("Messages:")
+        || s.starts_with("Session:")
+        || s.starts_with("session_id:")
+    {
         return true;
     }
 
@@ -717,9 +801,8 @@ fn inject_hermes_mcp_config(mcp_path: &str) -> bool {
     };
 
     // Build the tamux MCP server entry
-    let tamux_entry = format!(
-        "\nmcp_servers:\n  tamux:\n    command: \"{mcp_path}\"\n    args: []\n"
-    );
+    let tamux_entry =
+        format!("\nmcp_servers:\n  tamux:\n    command: \"{mcp_path}\"\n    args: []\n");
 
     let new_content = if content.contains("mcp_servers:") {
         // Insert tamux entry after the existing mcp_servers: line
@@ -752,7 +835,15 @@ fn inject_hermes_mcp_config(mcp_path: &str) -> bool {
 /// Inject tamux-mcp into OpenClaw via `mcporter config add`.
 fn inject_openclaw_mcp_config(mcp_path: &str) -> bool {
     match std::process::Command::new("mcporter")
-        .args(["config", "add", "tamux", "--command", mcp_path, "--scope", "home"])
+        .args([
+            "config",
+            "add",
+            "tamux",
+            "--command",
+            mcp_path,
+            "--scope",
+            "home",
+        ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .status()

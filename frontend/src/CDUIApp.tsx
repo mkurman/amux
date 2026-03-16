@@ -17,6 +17,7 @@ import { registerBaseComponents } from "./registry/registerBaseComponents";
 import { isCDUIViewVisible, useCDUIVisibilityFlags } from "./lib/cduiVisibility";
 import { registerAITrainingPlugin } from "./plugins/ai-training/registerPlugin";
 import { registerCodingAgentsPlugin } from "./plugins/coding-agents/registerPlugin";
+import { SetupOnboardingPanel } from "./components/SetupOnboardingPanel";
 
 const EMBEDDED_VIEW_IDS = new Set([
   "search-overlay",
@@ -290,6 +291,7 @@ const CDUIApp = () => {
         );
       })}
       <ViewBuilderOverlay />
+      <SetupOnboardingPanel />
     </AppContext.Provider>
   );
 };

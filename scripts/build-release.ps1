@@ -168,6 +168,12 @@ Write-Host "`n============================================================" -For
 Write-Host " tamux release build" -ForegroundColor White
 Write-Host "============================================================" -ForegroundColor White
 
+# Setup preflight
+Write-Step 0 $totalSteps "Running setup preflight..."
+& (Join-Path $PSScriptRoot "setup.ps1") -Check -Profile source -Format text
+if ($LASTEXITCODE -ne 0) { throw "Setup preflight failed" }
+Write-Ok "Setup preflight complete"
+
 # Step 1: Rust
 $step++
 if ($SkipRust) {
@@ -240,6 +246,13 @@ if (Test-Path $distDir) {
     foreach ($name in @("tamux-daemon.exe", "tamux.exe")) {
         $src = Join-Path $OutDir $name
         if (Test-Path $src) { Copy-Item $src $distDir -Force }
+    }
+}
+$gettingStartedSrc = Join-Path $ProjectRoot "docs/getting-started.md"
+if (Test-Path $gettingStartedSrc) {
+    Copy-Item $gettingStartedSrc (Join-Path $OutDir "GETTING_STARTED.md") -Force
+    if (Test-Path $distDir) {
+        Copy-Item $gettingStartedSrc (Join-Path $distDir "GETTING_STARTED.md") -Force
     }
 }
 

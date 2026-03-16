@@ -154,6 +154,14 @@ echo " tamux release build"
 echo "============================================================"
 
 # -----------------------------------------------------------
+# Setup preflight
+# -----------------------------------------------------------
+echo ""
+echo "[preflight] Checking required setup dependencies..."
+"$SCRIPT_DIR/setup.sh" --check --profile source --format text
+ok_msg "Setup preflight complete"
+
+# -----------------------------------------------------------
 # Step 1: Rust
 # -----------------------------------------------------------
 if [[ $SKIP_RUST -eq 1 ]]; then
@@ -209,6 +217,14 @@ if [[ -d "$PROJECT_ROOT/frontend/dist" ]]; then
             cp "$OUT_DIR/${bin}${EXE}" "$PROJECT_ROOT/frontend/dist/"
         fi
     done
+fi
+
+if [[ -f "$PROJECT_ROOT/docs/getting-started.md" ]]; then
+    cp "$PROJECT_ROOT/docs/getting-started.md" "$OUT_DIR/GETTING_STARTED.md"
+    if [[ -d "$PROJECT_ROOT/frontend/dist" ]]; then
+        cp "$PROJECT_ROOT/docs/getting-started.md" "$PROJECT_ROOT/frontend/dist/GETTING_STARTED.md"
+    fi
+    ok_msg "Collected GETTING_STARTED.md"
 fi
 
 # -----------------------------------------------------------

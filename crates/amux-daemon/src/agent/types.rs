@@ -21,6 +21,10 @@ pub struct AgentConfig {
     pub system_prompt: String,
     #[serde(default = "default_max_tool_loops")]
     pub max_tool_loops: u32,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default = "default_retry_delay_ms")]
+    pub retry_delay_ms: u64,
     #[serde(default = "default_task_poll_secs")]
     pub task_poll_interval_secs: u64,
     #[serde(default = "default_heartbeat_mins")]
@@ -61,6 +65,12 @@ fn default_system_prompt() -> String {
 fn default_max_tool_loops() -> u32 {
     25
 }
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_retry_delay_ms() -> u64 {
+    2000
+}
 fn default_task_poll_secs() -> u64 {
     10
 }
@@ -81,6 +91,8 @@ impl Default for AgentConfig {
             api_key: String::new(),
             system_prompt: default_system_prompt(),
             max_tool_loops: default_max_tool_loops(),
+            max_retries: default_max_retries(),
+            retry_delay_ms: default_retry_delay_ms(),
             task_poll_interval_secs: default_task_poll_secs(),
             heartbeat_interval_mins: default_heartbeat_mins(),
             tools: ToolsConfig::default(),
@@ -169,6 +181,10 @@ pub enum AgentEvent {
         cost: Option<f64>,
         provider: Option<String>,
         model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tps: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        generation_ms: Option<u64>,
     },
     Error {
         thread_id: String,
@@ -441,6 +457,11 @@ pub enum CompletionChunk {
         reasoning: Option<String>,
         input_tokens: u64,
         output_tokens: u64,
+    },
+    Retry {
+        attempt: u32,
+        max_retries: u32,
+        delay_ms: u64,
     },
     Error {
         message: String,

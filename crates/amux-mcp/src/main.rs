@@ -15,15 +15,16 @@
 
 use std::io::Write;
 
-use anyhow::{Context, Result};
 use amux_protocol::{
-    ClientMessage, AmuxCodec, DaemonMessage, ManagedCommandRequest, ManagedCommandSource,
+    AmuxCodec, ClientMessage, DaemonMessage, ManagedCommandRequest, ManagedCommandSource,
     SecurityLevel,
 };
+use anyhow::{Context, Result};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::time::{timeout, Duration};
 use tokio_util::codec::Framed;
 use tracing::{debug, error, info, warn};
 
@@ -277,13 +278,11 @@ fn tool_definitions() -> Value {
 // ---------------------------------------------------------------------------
 
 /// Connect to the tamux daemon and return a framed codec stream.
-async fn connect_daemon() -> Result<
-    Framed<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin, AmuxCodec>,
-> {
+async fn connect_daemon(
+) -> Result<Framed<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin, AmuxCodec>> {
     #[cfg(unix)]
     {
-        let runtime_dir =
-            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
         let path = std::path::PathBuf::from(runtime_dir).join("tamux-daemon.sock");
         let stream = tokio::net::UnixStream::connect(&path)
             .await
@@ -693,6 +692,23 @@ async fn tool_type_in_terminal(args: &Value) -> Result<Value> {
         .await
         .context("failed to send input to daemon")?;
 
+    // Input is fire-and-forget on success, but invalid/exited sessions yield
+    // an immediate daemon Error. Wait briefly to propagate that outcome.
+    match timeout(Duration::from_millis(250), framed.next()).await {
+        Ok(Some(Ok(DaemonMessage::Error { message }))) => {
+            anyhow::bail!("daemon error: {message}");
+        }
+        Ok(Some(Err(e))) => {
+            return Err(e.into());
+        }
+        Ok(None) => {
+            anyhow::bail!("daemon connection closed while sending input");
+        }
+        Ok(Some(Ok(_))) | Err(_) => {
+            // No immediate error => treat as accepted.
+        }
+    }
+
     Ok(serde_json::json!({
         "session_id": session_id.to_string(),
         "bytes_sent": data.len(),
@@ -710,7 +726,10 @@ async fn tool_get_git_status(args: &Value) -> Result<Value> {
     let resp = daemon_roundtrip(ClientMessage::GetGitStatus { path }).await?;
 
     match resp {
-        DaemonMessage::GitStatus { path: repo_path, info } => Ok(serde_json::json!({
+        DaemonMessage::GitStatus {
+            path: repo_path,
+            info,
+        } => Ok(serde_json::json!({
             "path": repo_path,
             "branch": info.branch,
             "is_dirty": info.is_dirty,
@@ -985,10 +1004,7 @@ async fn main() -> Result<()> {
                 debug!("received cancellation notification");
                 None
             }
-            "ping" => Some(JsonRpcResponse::success(
-                request.id,
-                serde_json::json!({}),
-            )),
+            "ping" => Some(JsonRpcResponse::success(request.id, serde_json::json!({}))),
             method => {
                 warn!("unknown method: {method}");
                 // Notifications (no id) should not receive error responses.

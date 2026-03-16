@@ -178,6 +178,14 @@ export function AgentTab({
                     <NumberInput value={settings.maxToolLoops} min={1} max={100}
                         onChange={(value) => updateSetting("maxToolLoops", value)} />
                 </SettingRow>
+                <SettingRow label="429 Max Retries">
+                    <NumberInput value={settings.maxRetries} min={0} max={10}
+                        onChange={(value) => updateSetting("maxRetries", value)} />
+                </SettingRow>
+                <SettingRow label="429 Retry Delay (ms)">
+                    <NumberInput value={settings.retryDelayMs} min={100} max={60000} step={100}
+                        onChange={(value) => updateSetting("retryDelayMs", value)} />
+                </SettingRow>
                 <SettingRow label="Budget Tokens">
                     <NumberInput value={settings.contextBudgetTokens} min={10000} max={500000} step={10000}
                         onChange={(value) => updateSetting("contextBudgetTokens", value)} />

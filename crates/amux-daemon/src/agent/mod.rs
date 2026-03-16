@@ -15,12 +15,15 @@ pub mod types;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use futures::StreamExt;
 use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::session_manager::SessionManager;
@@ -28,6 +31,15 @@ use crate::session_manager::SessionManager;
 use self::llm_client::{messages_to_api_format, send_chat_completion};
 use self::tool_executor::{execute_tool, get_available_tools};
 use self::types::*;
+
+#[derive(Clone)]
+struct StreamCancellationEntry {
+    generation: u64,
+    token: CancellationToken,
+}
+
+const ONECONTEXT_BOOTSTRAP_QUERY_MAX_CHARS: usize = 180;
+const ONECONTEXT_BOOTSTRAP_OUTPUT_MAX_CHARS: usize = 5000;
 
 // ---------------------------------------------------------------------------
 // AgentEngine
@@ -53,6 +65,9 @@ pub struct AgentEngine {
     gateway_threads: RwLock<HashMap<String, String>>,
     /// External agent runners for openclaw/hermes backends.
     external_runners: RwLock<HashMap<String, external_runner::ExternalAgentRunner>>,
+    /// Active cancellation tokens per thread for stop-stream behavior.
+    stream_cancellations: Mutex<HashMap<String, StreamCancellationEntry>>,
+    stream_generation: AtomicU64,
 }
 
 impl AgentEngine {
@@ -85,6 +100,8 @@ impl AgentEngine {
             gateway_slack_channels: RwLock::new(Vec::new()),
             gateway_threads: RwLock::new(HashMap::new()),
             external_runners: RwLock::new(runners),
+            stream_cancellations: Mutex::new(HashMap::new()),
+            stream_generation: AtomicU64::new(1),
         })
     }
 
@@ -96,6 +113,113 @@ impl AgentEngine {
     /// Get a reference to the event sender (for server.rs integration).
     pub fn event_sender(&self) -> broadcast::Sender<AgentEvent> {
         self.event_tx.clone()
+    }
+
+    async fn begin_stream_cancellation(&self, thread_id: &str) -> (u64, CancellationToken) {
+        let generation = self.stream_generation.fetch_add(1, Ordering::Relaxed);
+        let token = CancellationToken::new();
+        let mut streams = self.stream_cancellations.lock().await;
+        if let Some(previous) = streams.insert(
+            thread_id.to_string(),
+            StreamCancellationEntry {
+                generation,
+                token: token.clone(),
+            },
+        ) {
+            previous.token.cancel();
+        }
+        (generation, token)
+    }
+
+    async fn finish_stream_cancellation(&self, thread_id: &str, generation: u64) {
+        let mut streams = self.stream_cancellations.lock().await;
+        let should_remove = streams
+            .get(thread_id)
+            .map(|entry| entry.generation == generation)
+            .unwrap_or(false);
+        if should_remove {
+            streams.remove(thread_id);
+        }
+    }
+
+    pub async fn stop_stream(&self, thread_id: &str) -> bool {
+        let token = {
+            let streams = self.stream_cancellations.lock().await;
+            streams.get(thread_id).map(|entry| entry.token.clone())
+        };
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn refresh_memory_cache(&self) {
+        let mut memory = AgentMemory::default();
+        let memory_dirs = ordered_memory_dirs(&self.data_dir);
+        for dir in &memory_dirs {
+            if let Ok(soul) = tokio::fs::read_to_string(dir.join("SOUL.md")).await {
+                memory.soul = soul;
+                break;
+            }
+        }
+        for dir in &memory_dirs {
+            if let Ok(mem) = tokio::fs::read_to_string(dir.join("MEMORY.md")).await {
+                memory.memory = mem;
+                break;
+            }
+        }
+        for dir in &memory_dirs {
+            if let Ok(user) = tokio::fs::read_to_string(dir.join("USER.md")).await {
+                memory.user_profile = user;
+                break;
+            }
+        }
+        *self.memory.write().await = memory;
+    }
+
+    async fn onecontext_bootstrap_for_new_thread(&self, initial_message: &str) -> Option<String> {
+        let trimmed = initial_message.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if which::which("aline").is_err() {
+            return None;
+        }
+
+        let query = trimmed
+            .chars()
+            .take(ONECONTEXT_BOOTSTRAP_QUERY_MAX_CHARS)
+            .collect::<String>();
+
+        let mut cmd = tokio::process::Command::new("aline");
+        cmd.arg("search")
+            .arg(&query)
+            .arg("-t")
+            .arg("session")
+            .arg("--no-regex")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null());
+
+        let output = match tokio::time::timeout(Duration::from_secs(4), cmd.output()).await {
+            Ok(Ok(output)) if output.status.success() => output,
+            _ => return None,
+        };
+
+        let raw = String::from_utf8_lossy(&output.stdout);
+        let normalized = raw.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+
+        Some(
+            normalized
+                .chars()
+                .take(ONECONTEXT_BOOTSTRAP_OUTPUT_MAX_CHARS)
+                .collect(),
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -163,17 +287,7 @@ impl AgentEngine {
         }
 
         // Load memory files
-        let mut memory = AgentMemory::default();
-        if let Ok(soul) = tokio::fs::read_to_string(self.data_dir.join("SOUL.md")).await {
-            memory.soul = soul;
-        }
-        if let Ok(mem) = tokio::fs::read_to_string(self.data_dir.join("MEMORY.md")).await {
-            memory.memory = mem;
-        }
-        if let Ok(user) = tokio::fs::read_to_string(self.data_dir.join("USER.md")).await {
-            memory.user_profile = user;
-        }
-        *self.memory.write().await = memory;
+        self.refresh_memory_cache().await;
 
         tracing::info!("agent engine hydrated from {:?}", self.data_dir);
 
@@ -193,32 +307,53 @@ impl AgentEngine {
             || !gw.telegram_token.is_empty()
             || !gw.discord_token.is_empty()
         {
-            (gw.slack_token.clone(), gw.telegram_token.clone(), gw.discord_token.clone())
+            (
+                gw.slack_token.clone(),
+                gw.telegram_token.clone(),
+                gw.discord_token.clone(),
+            )
         } else {
-            let settings_path = self.data_dir.parent()
+            let settings_path = self
+                .data_dir
+                .parent()
                 .unwrap_or(std::path::Path::new("."))
                 .join("settings.json");
             match tokio::fs::read_to_string(&settings_path).await {
                 Ok(raw) => {
                     let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
                     (
-                        v.pointer("/settings/slackToken").or_else(|| v.get("slackToken")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        v.pointer("/settings/telegramToken").or_else(|| v.get("telegramToken")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        v.pointer("/settings/discordToken").or_else(|| v.get("discordToken")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        v.pointer("/settings/slackToken")
+                            .or_else(|| v.get("slackToken"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        v.pointer("/settings/telegramToken")
+                            .or_else(|| v.get("telegramToken"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        v.pointer("/settings/discordToken")
+                            .or_else(|| v.get("discordToken"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                     )
                 }
                 Err(_) => (String::new(), String::new(), String::new()),
             }
         };
 
-        let has_any = !slack_token.is_empty() || !telegram_token.is_empty() || !discord_token.is_empty();
+        let has_any =
+            !slack_token.is_empty() || !telegram_token.is_empty() || !discord_token.is_empty();
         if !has_any {
             tracing::info!("gateway: no platform tokens, polling disabled");
             return;
         }
 
         // Parse channel lists from settings
-        let settings_path = self.data_dir.parent()
+        let settings_path = self
+            .data_dir
+            .parent()
             .unwrap_or(std::path::Path::new("."))
             .join("settings.json");
         tracing::info!(?settings_path, "gateway: reading channel config");
@@ -227,10 +362,15 @@ impl AgentEngine {
                 match serde_json::from_str::<serde_json::Value>(&raw) {
                     Ok(v) => {
                         // Discord channels
-                        let filter = v.pointer("/settings/discordChannelFilter").or_else(|| v.get("discordChannelFilter")).and_then(|v| v.as_str()).unwrap_or("");
+                        let filter = v
+                            .pointer("/settings/discordChannelFilter")
+                            .or_else(|| v.get("discordChannelFilter"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         tracing::info!(discord_filter = %filter, "gateway: discordChannelFilter");
                         if !filter.is_empty() {
-                            let channels: Vec<String> = filter.split(',')
+                            let channels: Vec<String> = filter
+                                .split(',')
                                 .map(|s| s.trim().to_string())
                                 .filter(|s| !s.is_empty())
                                 .collect();
@@ -238,9 +378,14 @@ impl AgentEngine {
                         }
 
                         // Slack channels
-                        let filter = v.pointer("/settings/slackChannelFilter").or_else(|| v.get("slackChannelFilter")).and_then(|v| v.as_str()).unwrap_or("");
+                        let filter = v
+                            .pointer("/settings/slackChannelFilter")
+                            .or_else(|| v.get("slackChannelFilter"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         if !filter.is_empty() {
-                            let channels: Vec<String> = filter.split(',')
+                            let channels: Vec<String> = filter
+                                .split(',')
                                 .map(|s| s.trim().to_string())
                                 .filter(|s| !s.is_empty())
                                 .collect();
@@ -273,9 +418,10 @@ impl AgentEngine {
             "gateway: config loaded"
         );
 
-        *self.gateway_state.lock().await = Some(
-            gateway::GatewayState::new(gw_config, self.http_client.clone()),
-        );
+        *self.gateway_state.lock().await = Some(gateway::GatewayState::new(
+            gw_config,
+            self.http_client.clone(),
+        ));
 
         tracing::info!("gateway: polling initialized in daemon");
     }
@@ -304,18 +450,20 @@ impl AgentEngine {
                 .join("settings.json");
             match tokio::fs::read_to_string(&settings_path).await {
                 Ok(raw) => {
-                    let v: serde_json::Value =
-                        serde_json::from_str(&raw).unwrap_or_default();
+                    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
                     (
-                        v.pointer("/settings/slackToken").or_else(|| v.get("slackToken"))
+                        v.pointer("/settings/slackToken")
+                            .or_else(|| v.get("slackToken"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
-                        v.pointer("/settings/telegramToken").or_else(|| v.get("telegramToken"))
+                        v.pointer("/settings/telegramToken")
+                            .or_else(|| v.get("telegramToken"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
-                        v.pointer("/settings/discordToken").or_else(|| v.get("discordToken"))
+                        v.pointer("/settings/discordToken")
+                            .or_else(|| v.get("discordToken"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
@@ -331,22 +479,20 @@ impl AgentEngine {
         }
 
         // Find the gateway binary next to the daemon binary
-        let gateway_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                let dir = p.parent()?;
-                let name = if cfg!(windows) {
-                    "tamux-gateway.exe"
-                } else {
-                    "tamux-gateway"
-                };
-                let path = dir.join(name);
-                if path.exists() {
-                    Some(path)
-                } else {
-                    None
-                }
-            });
+        let gateway_path = std::env::current_exe().ok().and_then(|p| {
+            let dir = p.parent()?;
+            let name = if cfg!(windows) {
+                "tamux-gateway.exe"
+            } else {
+                "tamux-gateway"
+            };
+            let path = dir.join(name);
+            if path.exists() {
+                Some(path)
+            } else {
+                None
+            }
+        });
 
         let gateway_path = match gateway_path {
             Some(p) => p,
@@ -462,30 +608,37 @@ impl AgentEngine {
 
         // Re-read channel lists from settings.json every cycle
         // so we pick up changes without restart
-        let settings_path = self.data_dir.parent()
+        let settings_path = self
+            .data_dir
+            .parent()
             .unwrap_or(std::path::Path::new("."))
             .join("settings.json");
-        let (discord_channels, slack_channels) = match tokio::fs::read_to_string(&settings_path).await {
-            Ok(raw) => {
-                let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
-                let dc: Vec<String> = v.pointer("/settings/discordChannelFilter").or_else(|| v.get("discordChannelFilter"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                let sc: Vec<String> = v.pointer("/settings/slackChannelFilter").or_else(|| v.get("slackChannelFilter"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                (dc, sc)
-            }
-            Err(_) => (Vec::new(), Vec::new()),
-        };
+        let (discord_channels, slack_channels) =
+            match tokio::fs::read_to_string(&settings_path).await {
+                Ok(raw) => {
+                    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+                    let dc: Vec<String> = v
+                        .pointer("/settings/discordChannelFilter")
+                        .or_else(|| v.get("discordChannelFilter"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    let sc: Vec<String> = v
+                        .pointer("/settings/slackChannelFilter")
+                        .or_else(|| v.get("slackChannelFilter"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    (dc, sc)
+                }
+                Err(_) => (Vec::new(), Vec::new()),
+            };
 
         // Collect messages from all platforms
         let mut incoming = Vec::new();
@@ -493,7 +646,10 @@ impl AgentEngine {
         if !gw.config.telegram_token.is_empty() {
             let telegram_msgs = gateway::poll_telegram(gw).await;
             if !telegram_msgs.is_empty() {
-                tracing::info!(count = telegram_msgs.len(), "gateway: telegram messages received");
+                tracing::info!(
+                    count = telegram_msgs.len(),
+                    "gateway: telegram messages received"
+                );
             }
             incoming.extend(telegram_msgs);
         }
@@ -509,7 +665,10 @@ impl AgentEngine {
         if !discord_channels.is_empty() && !gw.config.discord_token.is_empty() {
             let discord_msgs = gateway::poll_discord(gw, &discord_channels).await;
             if !discord_msgs.is_empty() {
-                tracing::info!(count = discord_msgs.len(), "gateway: discord messages received");
+                tracing::info!(
+                    count = discord_msgs.len(),
+                    "gateway: discord messages received"
+                );
             }
             incoming.extend(discord_msgs);
         }
@@ -555,11 +714,26 @@ impl AgentEngine {
             }
 
             let (reply_tool, reply_tool_name) = match msg.platform.as_str() {
-                "Discord" => (format!("send_discord_message with channel_id=\"{}\"", msg.channel), "send_discord_message"),
-                "Slack" => (format!("send_slack_message with channel=\"{}\"", msg.channel), "send_slack_message"),
-                "Telegram" => (format!("send_telegram_message with chat_id=\"{}\"", msg.channel), "send_telegram_message"),
-                "WhatsApp" => (format!("send_whatsapp_message with phone=\"{}\"", msg.channel), "send_whatsapp_message"),
-                _ => ("the appropriate gateway tool".to_string(), "send_discord_message"),
+                "Discord" => (
+                    format!("send_discord_message with channel_id=\"{}\"", msg.channel),
+                    "send_discord_message",
+                ),
+                "Slack" => (
+                    format!("send_slack_message with channel=\"{}\"", msg.channel),
+                    "send_slack_message",
+                ),
+                "Telegram" => (
+                    format!("send_telegram_message with chat_id=\"{}\"", msg.channel),
+                    "send_telegram_message",
+                ),
+                "WhatsApp" => (
+                    format!("send_whatsapp_message with phone=\"{}\"", msg.channel),
+                    "send_whatsapp_message",
+                ),
+                _ => (
+                    "the appropriate gateway tool".to_string(),
+                    "send_discord_message",
+                ),
             };
 
             let prompt = format!(
@@ -591,7 +765,9 @@ impl AgentEngine {
             match self.send_message(existing_thread.as_deref(), &prompt).await {
                 Ok(thread_id) => {
                     // Store the mapping so follow-up messages use the same thread
-                    self.gateway_threads.write().await
+                    self.gateway_threads
+                        .write()
+                        .await
                         .insert(channel_key, thread_id.clone());
 
                     // Safety net: if the agent didn't call the gateway send tool,
@@ -600,12 +776,18 @@ impl AgentEngine {
                     if let Some(thread) = threads.get(&thread_id) {
                         let used_gateway_tool = thread.messages.iter().any(|m| {
                             m.role == MessageRole::Tool
-                                && m.tool_name.as_deref().map(|n| n.starts_with("send_")).unwrap_or(false)
+                                && m.tool_name
+                                    .as_deref()
+                                    .map(|n| n.starts_with("send_"))
+                                    .unwrap_or(false)
                         });
 
                         if !used_gateway_tool {
                             // Find the last assistant text response
-                            let last_response = thread.messages.iter().rev()
+                            let last_response = thread
+                                .messages
+                                .iter()
+                                .rev()
                                 .find(|m| m.role == MessageRole::Assistant && !m.content.is_empty())
                                 .map(|m| m.content.clone());
 
@@ -618,10 +800,18 @@ impl AgentEngine {
 
                                 // Auto-send via the gateway tool
                                 let auto_args = match msg.platform.as_str() {
-                                    "Discord" => serde_json::json!({"channel_id": msg.channel, "message": response_text}),
-                                    "Slack" => serde_json::json!({"channel": msg.channel, "message": response_text}),
-                                    "Telegram" => serde_json::json!({"chat_id": msg.channel, "message": response_text}),
-                                    "WhatsApp" => serde_json::json!({"phone": msg.channel, "message": response_text}),
+                                    "Discord" => {
+                                        serde_json::json!({"channel_id": msg.channel, "message": response_text})
+                                    }
+                                    "Slack" => {
+                                        serde_json::json!({"channel": msg.channel, "message": response_text})
+                                    }
+                                    "Telegram" => {
+                                        serde_json::json!({"chat_id": msg.channel, "message": response_text})
+                                    }
+                                    "WhatsApp" => {
+                                        serde_json::json!({"phone": msg.channel, "message": response_text})
+                                    }
                                     _ => serde_json::json!({"message": response_text}),
                                 };
 
@@ -640,7 +830,8 @@ impl AgentEngine {
                                     &self.event_tx,
                                     &self.data_dir,
                                     &self.http_client,
-                                ).await;
+                                )
+                                .await;
                             }
                         }
                     }
@@ -661,11 +852,7 @@ impl AgentEngine {
     // -----------------------------------------------------------------------
 
     /// Run a complete agent turn in a thread.
-    pub async fn send_message(
-        &self,
-        thread_id: Option<&str>,
-        content: &str,
-    ) -> Result<String> {
+    pub async fn send_message(&self, thread_id: Option<&str>, content: &str) -> Result<String> {
         let config = self.config.read().await.clone();
 
         // Route through external agent if backend is "openclaw" or "hermes"
@@ -682,13 +869,15 @@ impl AgentEngine {
         let provider_config = self.resolve_provider_config(&config)?;
 
         // Get or create thread
-        let tid = {
+        let (tid, is_new_thread) = {
             let given_id = thread_id.map(|s| s.to_string());
             let id = given_id.unwrap_or_else(|| format!("thread_{}", Uuid::new_v4()));
             let title = content.chars().take(50).collect::<String>();
+            let mut created = false;
 
             let mut threads = self.threads.write().await;
             if !threads.contains_key(&id) {
+                created = true;
                 threads.insert(
                     id.clone(),
                     AgentThread {
@@ -707,7 +896,7 @@ impl AgentEngine {
                 });
             }
             drop(threads);
-            id
+            (id, created)
         };
 
         // Add user message
@@ -729,10 +918,26 @@ impl AgentEngine {
             }
         }
 
+        let (stream_generation, stream_cancel_token) = self.begin_stream_cancellation(&tid).await;
+
+        let onecontext_bootstrap = if is_new_thread {
+            self.onecontext_bootstrap_for_new_thread(content).await
+        } else {
+            None
+        };
+
         // Build system prompt with memory
         let memory = self.memory.read().await;
-        let system_prompt = build_system_prompt(&config.system_prompt, &memory);
+        let memory_dir = active_memory_dir(&self.data_dir);
+        let mut system_prompt = build_system_prompt(&config.system_prompt, &memory, &memory_dir);
         drop(memory);
+        if let Some(recall) = onecontext_bootstrap {
+            system_prompt.push_str("\n\n## OneContext Recall\n");
+            system_prompt.push_str(
+                "Use this as historical context from prior sessions when relevant:\n",
+            );
+            system_prompt.push_str(&recall);
+        }
 
         // Get tools
         let tools = get_available_tools(&config);
@@ -740,18 +945,32 @@ impl AgentEngine {
         // Run the agent loop
         let max_loops = config.max_tool_loops;
         let mut loop_count = 0u32;
+        let mut was_cancelled = false;
 
-        while loop_count < max_loops {
+        'agent_loop: while loop_count < max_loops {
+            if stream_cancel_token.is_cancelled() {
+                was_cancelled = true;
+                break;
+            }
             loop_count += 1;
 
             // Build API messages from thread history
             let api_messages = {
                 let threads = self.threads.read().await;
-                let thread = threads.get(&tid).ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+                let thread = match threads.get(&tid) {
+                    Some(thread) => thread,
+                    None => {
+                        self.finish_stream_cancellation(&tid, stream_generation)
+                            .await;
+                        anyhow::bail!("thread not found");
+                    }
+                };
                 messages_to_api_format(&thread.messages)
             };
 
             // Call LLM
+            let llm_started_at = Instant::now();
+            let mut first_token_at: Option<Instant> = None;
             let mut stream = send_chat_completion(
                 &self.http_client,
                 &config.provider,
@@ -759,50 +978,98 @@ impl AgentEngine {
                 &system_prompt,
                 &api_messages,
                 &tools,
+                config.max_retries,
+                config.retry_delay_ms,
             );
 
             let mut accumulated_content = String::new();
             let mut accumulated_reasoning = String::new();
             let mut final_chunk: Option<CompletionChunk> = None;
 
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result? {
-                    CompletionChunk::Delta { content, reasoning } => {
-                        if !content.is_empty() {
-                            accumulated_content.push_str(&content);
-                            let _ = self.event_tx.send(AgentEvent::Delta {
-                                thread_id: tid.clone(),
-                                content,
-                            });
-                        }
-                        if let Some(r) = reasoning {
-                            accumulated_reasoning.push_str(&r);
-                            let _ = self.event_tx.send(AgentEvent::Reasoning {
-                                thread_id: tid.clone(),
-                                content: r,
-                            });
-                        }
-                    }
-                    chunk @ CompletionChunk::Done { .. } => {
-                        final_chunk = Some(chunk);
+            loop {
+                tokio::select! {
+                    _ = stream_cancel_token.cancelled() => {
+                        was_cancelled = true;
                         break;
                     }
-                    chunk @ CompletionChunk::ToolCalls { .. } => {
-                        final_chunk = Some(chunk);
-                        break;
-                    }
-                    CompletionChunk::Error { message } => {
-                        let _ = self.event_tx.send(AgentEvent::Error {
-                            thread_id: tid.clone(),
-                            message: message.clone(),
-                        });
-                        // Add error as assistant message
-                        self.add_assistant_message(&tid, &format!("Error: {message}"), 0, 0, None)
-                            .await;
-                        self.persist_threads().await;
-                        return Err(anyhow::anyhow!("LLM error: {message}"));
+                    maybe_chunk = stream.next() => {
+                        let Some(chunk_result) = maybe_chunk else {
+                            break;
+                        };
+
+                        let chunk = match chunk_result {
+                            Ok(chunk) => chunk,
+                            Err(e) => {
+                                self.finish_stream_cancellation(&tid, stream_generation).await;
+                                return Err(e);
+                            }
+                        };
+
+                        match chunk {
+                            CompletionChunk::Delta { content, reasoning } => {
+                                if first_token_at.is_none()
+                                    && (!content.is_empty()
+                                        || reasoning
+                                            .as_ref()
+                                            .map(|s| !s.is_empty())
+                                            .unwrap_or(false))
+                                {
+                                    first_token_at = Some(Instant::now());
+                                }
+                                if !content.is_empty() {
+                                    accumulated_content.push_str(&content);
+                                    let _ = self.event_tx.send(AgentEvent::Delta {
+                                        thread_id: tid.clone(),
+                                        content,
+                                    });
+                                }
+                                if let Some(r) = reasoning {
+                                    accumulated_reasoning.push_str(&r);
+                                    let _ = self.event_tx.send(AgentEvent::Reasoning {
+                                        thread_id: tid.clone(),
+                                        content: r,
+                                    });
+                                }
+                            }
+                            CompletionChunk::Retry {
+                                attempt,
+                                max_retries,
+                                delay_ms,
+                            } => {
+                                let _ = self.event_tx.send(AgentEvent::Delta {
+                                    thread_id: tid.clone(),
+                                    content: format!(
+                                        "\n[tamux] rate limited, running retry {attempt}/{max_retries} in {delay_ms}ms...\n"
+                                    ),
+                                });
+                            }
+                            chunk @ CompletionChunk::Done { .. } => {
+                                final_chunk = Some(chunk);
+                                break;
+                            }
+                            chunk @ CompletionChunk::ToolCalls { .. } => {
+                                final_chunk = Some(chunk);
+                                break;
+                            }
+                            CompletionChunk::Error { message } => {
+                                let _ = self.event_tx.send(AgentEvent::Error {
+                                    thread_id: tid.clone(),
+                                    message: message.clone(),
+                                });
+                                // Add error as assistant message
+                                self.add_assistant_message(&tid, &format!("Error: {message}"), 0, 0, None)
+                                    .await;
+                                self.persist_threads().await;
+                                self.finish_stream_cancellation(&tid, stream_generation).await;
+                                return Err(anyhow::anyhow!("LLM error: {message}"));
+                            }
+                        }
                     }
                 }
+            }
+
+            if was_cancelled {
+                break 'agent_loop;
             }
 
             match final_chunk {
@@ -832,6 +1099,17 @@ impl AgentEngine {
                     )
                     .await;
 
+                    let generation_secs = first_token_at
+                        .unwrap_or(llm_started_at)
+                        .elapsed()
+                        .as_secs_f64();
+                    let generation_ms = (generation_secs * 1000.0).round() as u64;
+                    let tps = if output_tokens > 0 && generation_secs > 0.0 {
+                        Some(output_tokens as f64 / generation_secs)
+                    } else {
+                        None
+                    };
+
                     let _ = self.event_tx.send(AgentEvent::Done {
                         thread_id: tid.clone(),
                         input_tokens,
@@ -839,6 +1117,8 @@ impl AgentEngine {
                         cost: None,
                         provider: Some(config.provider.clone()),
                         model: Some(provider_config.model.clone()),
+                        tps,
+                        generation_ms: Some(generation_ms),
                     });
                     break; // No tool calls, conversation turn is done
                 }
@@ -878,6 +1158,11 @@ impl AgentEngine {
 
                     // Execute each tool call
                     for tc in &tool_calls {
+                        if stream_cancel_token.is_cancelled() {
+                            was_cancelled = true;
+                            break;
+                        }
+
                         let _ = self.event_tx.send(AgentEvent::ToolCall {
                             thread_id: tid.clone(),
                             call_id: tc.id.clone(),
@@ -894,6 +1179,10 @@ impl AgentEngine {
                             &self.http_client,
                         )
                         .await;
+
+                        if tc.function.name == "update_memory" && !result.is_error {
+                            self.refresh_memory_cache().await;
+                        }
 
                         let _ = self.event_tx.send(AgentEvent::ToolResult {
                             thread_id: tid.clone(),
@@ -920,6 +1209,15 @@ impl AgentEngine {
                                 });
                             }
                         }
+
+                        if stream_cancel_token.is_cancelled() {
+                            was_cancelled = true;
+                            break;
+                        }
+                    }
+
+                    if was_cancelled {
+                        break 'agent_loop;
                     }
 
                     // Loop continues — next iteration will include tool results in context
@@ -933,7 +1231,7 @@ impl AgentEngine {
             }
         }
 
-        if loop_count >= max_loops {
+        if !was_cancelled && loop_count >= max_loops {
             let _ = self.event_tx.send(AgentEvent::Error {
                 thread_id: tid.clone(),
                 message: "Tool execution limit reached".into(),
@@ -941,6 +1239,8 @@ impl AgentEngine {
         }
 
         self.persist_threads().await;
+        self.finish_stream_cancellation(&tid, stream_generation)
+            .await;
         Ok(tid)
     }
 
@@ -1224,13 +1524,15 @@ impl AgentEngine {
         thread_id: Option<&str>,
         content: &str,
     ) -> Result<String> {
-        let tid = {
+        let (tid, is_new_thread) = {
             let given_id = thread_id.map(|s| s.to_string());
             let id = given_id.unwrap_or_else(|| format!("thread_{}", Uuid::new_v4()));
             let title = content.chars().take(50).collect::<String>();
+            let mut created = false;
 
             let mut threads = self.threads.write().await;
             if !threads.contains_key(&id) {
+                created = true;
                 threads.insert(
                     id.clone(),
                     AgentThread {
@@ -1249,7 +1551,7 @@ impl AgentEngine {
                 });
             }
             drop(threads);
-            id
+            (id, created)
         };
 
         // Add user message
@@ -1270,6 +1572,14 @@ impl AgentEngine {
                 thread.updated_at = now_millis();
             }
         }
+
+        let onecontext_bootstrap = if is_new_thread {
+            self.onecontext_bootstrap_for_new_thread(content).await
+        } else {
+            None
+        };
+
+        let (stream_generation, stream_cancel_token) = self.begin_stream_cancellation(&tid).await;
 
         // Ensure tamux-mcp is configured in the external agent's MCP settings
         {
@@ -1292,27 +1602,53 @@ impl AgentEngine {
                 .unwrap_or(true)
         };
 
-        let enriched_prompt = if is_first_message {
+        let mut enriched_prompt = if is_first_message {
             let memory = self.memory.read().await;
-            build_external_agent_prompt(config, &memory, content)
+            let memory_dir = active_memory_dir(&self.data_dir);
+            build_external_agent_prompt(config, &memory, content, &memory_dir)
         } else {
             content.to_string()
         };
+        if let Some(recall) = onecontext_bootstrap {
+            enriched_prompt.push_str("\n\n[ONECONTEXT RECALL]\n");
+            enriched_prompt.push_str(&recall);
+        }
 
         // Run through external agent
         let runners = self.external_runners.read().await;
-        let runner = runners.get(&config.agent_backend).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No external agent runner for backend '{}'",
-                config.agent_backend
-            )
-        })?;
+        let runner = match runners.get(&config.agent_backend) {
+            Some(runner) => runner,
+            None => {
+                self.finish_stream_cancellation(&tid, stream_generation)
+                    .await;
+                anyhow::bail!(
+                    "No external agent runner for backend '{}'",
+                    config.agent_backend
+                );
+            }
+        };
 
-        let response = runner.send_message(&tid, &enriched_prompt).await?;
+        let response = match runner
+            .send_message(&tid, &enriched_prompt, Some(stream_cancel_token))
+            .await
+        {
+            Ok(response) => Some(response),
+            Err(e) if external_runner::is_stream_cancelled(&e) => None,
+            Err(e) => {
+                self.finish_stream_cancellation(&tid, stream_generation)
+                    .await;
+                return Err(e);
+            }
+        };
 
         // Store assistant response in thread
-        self.add_assistant_message(&tid, &response, 0, 0, None).await;
+        if let Some(response) = response {
+            self.add_assistant_message(&tid, &response, 0, 0, None)
+                .await;
+        }
         self.persist_threads().await;
+        self.finish_stream_cancellation(&tid, stream_generation)
+            .await;
 
         Ok(tid)
     }
@@ -1434,12 +1770,46 @@ fn agent_data_dir() -> PathBuf {
     let base = if cfg!(windows) {
         std::env::var("LOCALAPPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join("AppData").join("Local"))
+            .unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join("AppData")
+                    .join("Local")
+            })
             .join("tamux")
     } else {
         dirs::home_dir().unwrap_or_default().join(".tamux")
     };
     base.join("agent")
+}
+
+fn ordered_memory_dirs(agent_data_dir: &std::path::Path) -> Vec<PathBuf> {
+    let root = agent_data_dir
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let mut dirs = vec![root.join("agent-mission"), agent_data_dir.to_path_buf()];
+    dirs.dedup();
+    dirs
+}
+
+fn dir_has_memory_files(dir: &std::path::Path) -> bool {
+    ["MEMORY.md", "SOUL.md", "USER.md"]
+        .iter()
+        .any(|name| dir.join(name).exists())
+}
+
+pub(super) fn active_memory_dir(agent_data_dir: &std::path::Path) -> PathBuf {
+    let dirs = ordered_memory_dirs(agent_data_dir);
+    if let Some(path) = dirs.iter().find(|dir| dir_has_memory_files(dir)) {
+        return path.clone();
+    }
+    if let Some(path) = dirs.iter().find(|dir| dir.exists()) {
+        return path.clone();
+    }
+    // Default to the frontend mission directory for new installs.
+    dirs.first()
+        .cloned()
+        .unwrap_or_else(|| agent_data_dir.to_path_buf())
 }
 
 fn now_millis() -> u64 {
@@ -1455,8 +1825,10 @@ fn build_external_agent_prompt(
     config: &AgentConfig,
     memory: &AgentMemory,
     user_message: &str,
+    memory_dir: &std::path::Path,
 ) -> String {
     let mut context_parts = Vec::new();
+    let memory_root = memory_dir;
 
     // Environment context — do NOT override the agent's own identity
     context_parts.push(
@@ -1487,10 +1859,7 @@ fn build_external_agent_prompt(
 
     // Operator's instructions for this session
     if !config.system_prompt.is_empty() {
-        context_parts.push(format!(
-            "Operator instructions: {}\n",
-            config.system_prompt
-        ));
+        context_parts.push(format!("Operator instructions: {}\n", config.system_prompt));
     }
 
     // Gateway info — the agent can use its own gateway tools if it has them
@@ -1525,6 +1894,13 @@ fn build_external_agent_prompt(
         context_parts.push(format!("Operator profile:\n{}\n", memory.user_profile));
     }
 
+    context_parts.push(format!(
+        "tamux persistent memory files on this machine:\n- MEMORY.md: {}\n- SOUL.md: {}\n- USER.md: {}\n",
+        memory_root.join("MEMORY.md").display(),
+        memory_root.join("SOUL.md").display(),
+        memory_root.join("USER.md").display(),
+    ));
+
     if context_parts.is_empty() {
         return user_message.to_string();
     }
@@ -1536,8 +1912,11 @@ fn build_external_agent_prompt(
     )
 }
 
-fn build_system_prompt(base: &str, memory: &AgentMemory) -> String {
+fn build_system_prompt(base: &str, memory: &AgentMemory, data_dir: &std::path::Path) -> String {
     let mut prompt = String::new();
+    let memory_path = data_dir.join("MEMORY.md");
+    let soul_path = data_dir.join("SOUL.md");
+    let user_path = data_dir.join("USER.md");
 
     if !memory.soul.is_empty() {
         prompt.push_str(&memory.soul);
@@ -1555,6 +1934,25 @@ fn build_system_prompt(base: &str, memory: &AgentMemory) -> String {
         prompt.push_str("\n\n## Operator Profile\n");
         prompt.push_str(&memory.user_profile);
     }
+
+    prompt.push_str(
+        &format!(
+            "\n\n## Persistent Memory File Paths\n\
+             - MEMORY.md: {}\n\
+             - SOUL.md: {}\n\
+             - USER.md: {}\n\
+             - Use these exact paths when reading or explaining where tamux agent memory lives on this platform.\n",
+            memory_path.display(),
+            soul_path.display(),
+            user_path.display(),
+        ),
+    );
+
+    prompt.push_str(
+        "\n\n## Recall and Memory Maintenance\n\
+         - Use `onecontext_search` when the user asks about prior decisions, existing implementations, or historical debugging context.\n\
+         - When you learn durable operator preferences or stable project facts, call `update_memory` with a concise update so future sessions start with that context.\n",
+    );
 
     prompt
 }

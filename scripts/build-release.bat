@@ -27,6 +27,17 @@ echo ============================================================
 echo.
 
 REM -----------------------------------------------------------
+REM Setup preflight
+REM -----------------------------------------------------------
+echo [0/5] Running setup preflight...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\setup.ps1" -Check -Profile source -Format text
+if errorlevel 1 (
+    echo ERROR: setup preflight failed.
+    exit /b 1
+)
+echo       Setup preflight complete.
+
+REM -----------------------------------------------------------
 REM Step 1: Build Rust workspace (daemon + CLI + MCP + gateway)
 REM -----------------------------------------------------------
 echo [1/5] Building Rust binaries (release)...
@@ -67,6 +78,10 @@ copy /Y "%PROJECT_ROOT%\target\release\tamux-gateway.exe" "%OUT_DIR%\" >nul 2>nu
 REM Copy daemon + CLI into frontend/dist for Electron bundling
 copy /Y "%OUT_DIR%\tamux-daemon.exe" "%PROJECT_ROOT%\frontend\dist\" >nul
 copy /Y "%OUT_DIR%\tamux.exe"        "%PROJECT_ROOT%\frontend\dist\" >nul
+if exist "%PROJECT_ROOT%\docs\getting-started.md" (
+    copy /Y "%PROJECT_ROOT%\docs\getting-started.md" "%OUT_DIR%\GETTING_STARTED.md" >nul
+    copy /Y "%PROJECT_ROOT%\docs\getting-started.md" "%PROJECT_ROOT%\frontend\dist\GETTING_STARTED.md" >nul
+)
 echo       Done.
 
 REM -----------------------------------------------------------

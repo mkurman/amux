@@ -39,6 +39,29 @@ declare global {
         error?: string | null;
     };
 
+    type AmuxSetupDependency = {
+        name: string;
+        label: string;
+        command: string;
+        found: boolean;
+        path: string | null;
+        installHints: string[];
+    };
+
+    type AmuxSetupPrereqReport = {
+        profile: "source" | "desktop";
+        platform: string;
+        required: AmuxSetupDependency[];
+        optional: AmuxSetupDependency[];
+        missingRequired: string[];
+        daemonPath: string;
+        cliPath: string;
+        installRoot: string;
+        dataDir: string;
+        gettingStartedPath: string;
+        whatIsTamux: string;
+    };
+
     type AmuxInstalledPluginRecord = {
         packageName: string;
         packageVersion: string;
@@ -56,6 +79,7 @@ declare global {
     };
 
     type AmuxBridge = {
+        checkSetupPrereqs?: (profile?: "source" | "desktop") => Promise<AmuxSetupPrereqReport>;
         discoverCodingAgents?: () => Promise<AmuxCodingAgentDiscoveryResult[]>;
         discoverAITraining?: (workspacePath?: string | null) => Promise<AmuxAITrainingDiscoveryResult[]>;
         getDataDir?: () => Promise<string>;

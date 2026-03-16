@@ -1798,6 +1798,113 @@ function commandExists(binary) {
     }
 }
 
+const SETUP_DEPENDENCY_DEFS = {
+    cargo: { name: 'cargo', label: 'Rust cargo', command: 'cargo' },
+    node: { name: 'node', label: 'Node.js', command: 'node' },
+    npm: { name: 'npm', label: 'npm', command: 'npm' },
+    git: { name: 'git', label: 'git', command: 'git' },
+    uv: { name: 'uv', label: 'uv', command: 'uv' },
+    aline: { name: 'aline', label: 'Aline CLI', command: 'aline' },
+    'tamux-mcp': { name: 'tamux-mcp', label: 'tamux-mcp', command: 'tamux-mcp' },
+    hermes: { name: 'hermes', label: 'Hermes Agent', command: 'hermes' },
+    openclaw: { name: 'openclaw', label: 'OpenClaw', command: 'openclaw' },
+};
+
+const SETUP_REQUIRED_BY_PROFILE = {
+    source: ['cargo', 'node', 'npm', 'git', 'uv'],
+    desktop: [],
+};
+
+const SETUP_OPTIONAL = ['aline', 'tamux-mcp', 'hermes', 'openclaw'];
+
+function setupInstallHint(depName) {
+    const platform = process.platform;
+    switch (depName) {
+        case 'cargo':
+            return platform === 'win32'
+                ? ['winget install Rustlang.Rustup']
+                : ['curl https://sh.rustup.rs -sSf | sh'];
+        case 'node':
+        case 'npm':
+            if (platform === 'darwin') return ['brew install node'];
+            if (platform === 'win32') return ['winget install OpenJS.NodeJS.LTS'];
+            return ['sudo apt update && sudo apt install -y nodejs npm'];
+        case 'git':
+            if (platform === 'darwin') return ['brew install git'];
+            if (platform === 'win32') return ['winget install Git.Git'];
+            return ['sudo apt update && sudo apt install -y git'];
+        case 'uv':
+            if (platform === 'win32') {
+                return ['powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'];
+            }
+            return ['curl -LsSf https://astral.sh/uv/install.sh | sh'];
+        case 'aline':
+            return ['uv tool install aline-ai'];
+        case 'tamux-mcp':
+            return ['cargo build --release -p tamux-mcp'];
+        case 'hermes':
+            return ['python3 -m pip install "hermes-agent[all]"'];
+        case 'openclaw':
+            return ['npm install -g openclaw'];
+        default:
+            return [];
+    }
+}
+
+function resolveGettingStartedPath() {
+    const devCandidate = path.join(__dirname, '..', '..', 'docs', 'getting-started.md');
+    const packagedCandidates = [
+        path.join(process.resourcesPath, 'GETTING_STARTED.md'),
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'GETTING_STARTED.md'),
+    ];
+    for (const candidate of [devCandidate, ...packagedCandidates]) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return devCandidate;
+}
+
+function collectSetupDependency(name) {
+    const def = SETUP_DEPENDENCY_DEFS[name];
+    if (!def) return null;
+    const commandPath = resolveExecutablePath(def.command);
+    return {
+        name: def.name,
+        label: def.label,
+        command: def.command,
+        found: Boolean(commandPath),
+        path: commandPath,
+        installHints: setupInstallHint(def.name),
+    };
+}
+
+function checkSetupPrereqs(_event, profile = 'desktop') {
+    const normalizedProfile = profile === 'source' ? 'source' : 'desktop';
+    const requiredNames = SETUP_REQUIRED_BY_PROFILE[normalizedProfile] || SETUP_REQUIRED_BY_PROFILE.desktop;
+    const required = requiredNames
+        .map((name) => collectSetupDependency(name))
+        .filter(Boolean);
+    const optional = SETUP_OPTIONAL
+        .map((name) => collectSetupDependency(name))
+        .filter(Boolean);
+    const missingRequired = required.filter((entry) => !entry.found).map((entry) => entry.name);
+
+    return {
+        profile: normalizedProfile,
+        platform: process.platform,
+        required,
+        optional,
+        missingRequired,
+        daemonPath: getDaemonPath(),
+        cliPath: getCliPath(),
+        installRoot: path.dirname(getDaemonPath()),
+        dataDir: ensureTamuxDataDir(),
+        gettingStartedPath: resolveGettingStartedPath(),
+        whatIsTamux: 'tamux is an AI-native terminal multiplexer with a Rust daemon, pane/session control, and agent workflows.',
+    };
+}
+
 const KNOWN_CODING_AGENTS = [
     {
         id: 'claude',
@@ -2752,6 +2859,7 @@ function registerIpcHandlers() {
     ipcMain.handle('system-monitor-snapshot', getSystemMonitorSnapshot);
     ipcMain.handle('getDaemonPath', () => getDaemonPath());
     ipcMain.handle('getPlatform', () => process.platform);
+    ipcMain.handle('setup-check-prereqs', (event, profile) => checkSetupPrereqs(event, profile));
     ipcMain.handle('coding-agents-discover', () => discoverCodingAgents());
     ipcMain.handle('ai-training-discover', (_event, workspacePath) => discoverAITraining(workspacePath));
     ipcMain.handle('plugin-list-installed', () => listInstalledPlugins());

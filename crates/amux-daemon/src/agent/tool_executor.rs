@@ -17,6 +17,10 @@ use super::types::{
     ToolResult,
 };
 
+const ONECONTEXT_TOOL_QUERY_MAX_CHARS: usize = 300;
+const ONECONTEXT_TOOL_OUTPUT_MAX_CHARS: usize = 12_000;
+const ONECONTEXT_TOOL_TIMEOUT_SECS: u64 = 8;
+
 // ---------------------------------------------------------------------------
 // Tool definitions (OpenAI function calling schema)
 // ---------------------------------------------------------------------------
@@ -123,6 +127,19 @@ pub fn get_available_tools(config: &AgentConfig) -> Vec<ToolDefinition> {
             "properties": {
                 "query": { "type": "string", "description": "Search query" },
                 "limit": { "type": "integer", "description": "Max results (default: 20)" }
+            },
+            "required": ["query"]
+        }),
+    ));
+    tools.push(tool_def(
+        "onecontext_search",
+        "Search Aline OneContext history for related prior sessions/events/turns.",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query" },
+                "scope": { "type": "string", "enum": ["session", "event", "turn"], "description": "Search scope (default: session)" },
+                "no_regex": { "type": "boolean", "description": "Treat query as plain text (default: true)" }
             },
             "required": ["query"]
         }),
@@ -364,7 +381,7 @@ fn tool_def(name: &str, description: &str, parameters: serde_json::Value) -> Too
 pub async fn execute_tool(
     tool_call: &ToolCall,
     session_manager: &Arc<SessionManager>,
-    session_id: Option<SessionId>,
+    _session_id: Option<SessionId>,
     event_tx: &broadcast::Sender<AgentEvent>,
     agent_data_dir: &std::path::Path,
     http_client: &reqwest::Client,
@@ -402,7 +419,7 @@ pub async fn execute_tool(
         "get_system_info" => execute_system_info().await,
         "list_processes" => execute_list_processes(&args).await,
         "search_history" => execute_search_history(&args, session_manager).await,
-        "list_sessions" => execute_list_sessions(session_manager).await,
+        "onecontext_search" => execute_onecontext_search(&args).await,
         "notify_user" => execute_notify(&args, event_tx).await,
         "update_memory" => execute_update_memory(&args, agent_data_dir).await,
         "web_search" => execute_web_search(&args, http_client).await,
@@ -716,6 +733,96 @@ async fn execute_search_history(
     }
 }
 
+async fn execute_onecontext_search(args: &serde_json::Value) -> Result<String> {
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing 'query' argument"))?
+        .trim();
+
+    if query.is_empty() {
+        return Err(anyhow::anyhow!("'query' must not be empty"));
+    }
+
+    let scope = args
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("session");
+    if !matches!(scope, "session" | "event" | "turn") {
+        return Err(anyhow::anyhow!(
+            "invalid 'scope': {scope} (expected session, event, or turn)"
+        ));
+    }
+
+    if which::which("aline").is_err() {
+        return Ok("OneContext search unavailable: `aline` CLI not found on PATH.".into());
+    }
+
+    let no_regex = args
+        .get("no_regex")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let bounded_query = query
+        .chars()
+        .take(ONECONTEXT_TOOL_QUERY_MAX_CHARS)
+        .collect::<String>();
+
+    let mut cmd = tokio::process::Command::new("aline");
+    cmd.arg("search")
+        .arg(&bounded_query)
+        .arg("-t")
+        .arg(scope)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    if no_regex {
+        cmd.arg("--no-regex");
+    }
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(ONECONTEXT_TOOL_TIMEOUT_SECS),
+        cmd.output(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("onecontext search timed out"))??;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(anyhow::anyhow!("onecontext search failed"));
+        }
+        return Err(anyhow::anyhow!("onecontext search failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Ok(format!(
+            "No OneContext matches for \"{bounded_query}\" in {scope} scope."
+        ));
+    }
+
+    let trimmed_chars = trimmed.chars().count();
+    let output_text = if trimmed_chars > ONECONTEXT_TOOL_OUTPUT_MAX_CHARS {
+        let shortened = trimmed
+            .chars()
+            .take(ONECONTEXT_TOOL_OUTPUT_MAX_CHARS)
+            .collect::<String>();
+        format!(
+            "{}\n\n(truncated, {} chars total)",
+            shortened,
+            trimmed_chars
+        )
+    } else {
+        trimmed.to_string()
+    };
+
+    Ok(format!(
+        "OneContext results for \"{bounded_query}\" ({scope} scope):\n\n{output_text}"
+    ))
+}
+
 async fn execute_list_sessions(session_manager: &Arc<SessionManager>) -> Result<String> {
     let sessions = session_manager.list().await;
 
@@ -777,8 +884,9 @@ async fn execute_update_memory(
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing 'content' argument"))?;
 
-    let memory_path = agent_data_dir.join("MEMORY.md");
-    tokio::fs::create_dir_all(agent_data_dir).await?;
+    let memory_dir = super::active_memory_dir(agent_data_dir);
+    let memory_path = memory_dir.join("MEMORY.md");
+    tokio::fs::create_dir_all(&memory_dir).await?;
     tokio::fs::write(&memory_path, content).await?;
 
     Ok("Memory updated successfully.".into())
