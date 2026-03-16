@@ -47,6 +47,7 @@ import "@xterm/xterm/css/xterm.css";
 interface TerminalPaneProps {
   paneId: string;
   sessionId?: string;
+  hideHeader?: boolean;
 }
 
 type DaemonState = "checking" | "reachable" | "unavailable";
@@ -100,7 +101,7 @@ function detectInlineApprovalPrompt(buffer: string): string | null {
  * 3. Pipes input to the daemon and renders output.
  * 4. Uses xterm-addon-fit to auto-resize.
  */
-export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
+export function TerminalPane({ paneId, sessionId, hideHeader }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -132,6 +133,8 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
   const setPaneName = useWorkspaceStore((s) => s.setPaneName);
   const setCanvasPanelStatus = useWorkspaceStore((s) => s.setCanvasPanelStatus);
   const clearCanvasPanelStatus = useWorkspaceStore((s) => s.clearCanvasPanelStatus);
+  const updateCanvasPanelTitle = useWorkspaceStore((s) => s.updateCanvasPanelTitle);
+  const updateCanvasPanelCwd = useWorkspaceStore((s) => s.updateCanvasPanelCwd);
   const setCanvasView = useWorkspaceStore((s) => s.setCanvasView);
   const setCanvasPreviousView = useWorkspaceStore((s) => s.setCanvasPreviousView);
   const paneName = useWorkspaceStore(
@@ -191,6 +194,8 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
   const operationalEvents = useAgentMissionStore((s) => s.operationalEvents);
   const addNotification = useNotificationStore((s) => s.addNotification);
   const clearPaneNotifications = useNotificationStore((s) => s.clearPaneNotifications);
+  const paneNameRef = useRef(paneName);
+  paneNameRef.current = paneName;
   const bracketedPasteRef = useRef(settings.bracketedPaste);
   const autoCopyOnSelectRef = useRef(settings.autoCopyOnSelect);
   const pendingApprovalIdRef = useRef<string | null>(null);
@@ -1146,6 +1151,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
               sessionId: event.sessionId ?? requestedSessionIdRef.current ?? null,
               command,
             });
+            updateCanvasPanelTitle(paneId, command);
             return;
           }
 
@@ -1164,6 +1170,15 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
               exitCode: event.exitCode ?? null,
               durationMs: lastShellCommandRef.current ? Math.max(0, Date.now() - lastShellCommandRef.current.timestamp) : null,
             });
+            updateCanvasPanelTitle(paneId, paneNameRef.current);
+            return;
+          }
+
+          if (event.type === "cwd-changed") {
+            const cwd = event.cwd ?? "";
+            if (cwd) {
+              updateCanvasPanelCwd(paneId, cwd);
+            }
             return;
           }
 
@@ -1568,7 +1583,7 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
     writeClipboardText, captureRollingTranscript, trackInput, completeLatestPendingEntry, addCommandLogEntry,
     recordCommandFinished, recordCommandStarted, recordCognitiveOutput, recordError, recordSessionExited, recordSessionReady,
     isCommandAllowed, requestApproval, setHistoryResults, setSharedCursorMode, setSnapshots, setSymbolHits, upsertDaemonApproval,
-    setCanvasPanelStatus, clearCanvasPanelStatus, addNotification, clearPaneNotifications, restoreCanvasPreviousView,
+    setCanvasPanelStatus, clearCanvasPanelStatus, updateCanvasPanelTitle, updateCanvasPanelCwd, addNotification, clearPaneNotifications, restoreCanvasPreviousView,
     scheduleRepaintRecovery, clearInlineApprovalPrompt, maybeRaiseInlineApprovalPrompt]);
 
   const canCopy = hasSelection;
@@ -1609,15 +1624,17 @@ export function TerminalPane({ paneId, sessionId }: TerminalPaneProps) {
         outline: "none",
       }}
     >
-      <TerminalPaneHeader
-        paneId={paneId}
-        paneName={paneName}
-        paneNameDraft={paneNameDraft}
-        setPaneNameDraft={setPaneNameDraft}
-        setPaneName={setPaneName}
-      />
+      {hideHeader ? null : (
+        <TerminalPaneHeader
+          paneId={paneId}
+          paneName={paneName}
+          paneNameDraft={paneNameDraft}
+          setPaneNameDraft={setPaneNameDraft}
+          setPaneName={setPaneName}
+        />
+      )}
 
-      <div ref={containerRef} style={{ width: "100%", height: "calc(100% - 36px)" }} />
+      <div ref={containerRef} style={{ width: "100%", height: hideHeader ? "100%" : "calc(100% - 36px)" }} />
       <SharedCursor mode={sharedCursorMode} />
 
       <TerminalContextMenu

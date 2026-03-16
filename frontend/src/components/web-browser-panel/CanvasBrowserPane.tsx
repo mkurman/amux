@@ -17,10 +17,13 @@ export function CanvasBrowserPane({
   const updateCanvasPanelTitle = useWorkspaceStore((s) => s.updateCanvasPanelTitle);
 
   const webviewRef = useRef<any>(null);
-  const frameRef = useRef<HTMLDivElement | null>(null);
   const [address, setAddress] = useState(initialUrl);
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
   const [pageTitle, setPageTitle] = useState("Browser");
+  const currentUrlRef = useRef(currentUrl);
+  const pageTitleRef = useRef(pageTitle);
+  currentUrlRef.current = currentUrl;
+  pageTitleRef.current = pageTitle;
 
   const navigate = useCallback((url: string) => {
     const webview = webviewRef.current;
@@ -29,6 +32,9 @@ export function CanvasBrowserPane({
     setCurrentUrl(normalized);
     setAddress(normalized);
     updateCanvasPanelUrl(paneId, normalized);
+    if (typeof webview.loadURL === "function") {
+      webview.loadURL(normalized);
+    }
   }, [paneId, updateCanvasPanelUrl]);
 
   const back = useCallback(() => {
@@ -145,22 +151,24 @@ export function CanvasBrowserPane({
 
   useEffect(() => {
     return registerCanvasBrowserController(paneId, {
-      getUrl: () => currentUrl,
-      getTitle: () => pageTitle,
+      getUrl: () => currentUrlRef.current,
+      getTitle: () => pageTitleRef.current,
       getDomSnapshot: async () => {
         const webview = webviewRef.current;
+        const url = currentUrlRef.current;
+        const title = pageTitleRef.current;
         if (!webview || typeof webview.executeJavaScript !== "function") {
-          return { title: pageTitle, url: currentUrl, text: "" };
+          return { title, url, text: "" };
         }
         try {
           const text: string = await webview.executeJavaScript("document.body.innerText");
-          return { title: pageTitle, url: currentUrl, text: text ?? "" };
+          return { title, url, text: text ?? "" };
         } catch {
-          return { title: pageTitle, url: currentUrl, text: "" };
+          return { title, url, text: "" };
         }
       },
     });
-  });
+  }, [paneId]);
 
   return (
     <div
@@ -186,7 +194,6 @@ export function CanvasBrowserPane({
       />
 
       <div
-        ref={frameRef}
         style={{
           flex: 1,
           minHeight: 0,

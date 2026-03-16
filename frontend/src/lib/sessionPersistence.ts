@@ -98,6 +98,8 @@ export function captureSession(): PersistedSession {
                 status: panel.status,
                 sessionId: panel.sessionId,
                 url: panel.url,
+                cwd: panel.cwd,
+                userRenamed: panel.userRenamed || undefined,
                 lastActivityAt: panel.lastActivityAt,
               }))
               : undefined,
@@ -152,6 +154,7 @@ function captureWorkspaceTopology() {
                   : null,
                 url: panelType === "browser" ? (canvasPanel?.url ?? null) : null,
                 title: panelType === "browser" ? (canvasPanel?.title ?? null) : null,
+                cwd: panelType === "terminal" ? (canvasPanel?.cwd ?? null) : null,
               };
             }),
           };
@@ -161,9 +164,15 @@ function captureWorkspaceTopology() {
   };
 }
 
-/** Write workspace topology to the data dir for the daemon. */
+let lastTopologyJson = "";
+
+/** Write workspace topology to the data dir for the daemon (skips if unchanged). */
 export function saveWorkspaceTopology(): void {
-  scheduleJsonWrite(TOPOLOGY_FILE, captureWorkspaceTopology(), 200);
+  const data = captureWorkspaceTopology();
+  const next = JSON.stringify(data);
+  if (next === lastTopologyJson) return;
+  lastTopologyJson = next;
+  scheduleJsonWrite(TOPOLOGY_FILE, data, 200);
 }
 
 /** Save the current session to the amux data directory. */

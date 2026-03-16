@@ -1,13 +1,9 @@
-export type CanvasBrowserDomSnapshot = {
-  title: string;
-  url: string;
-  text: string;
-};
+import type { BrowserDomSnapshot } from "./browserRegistry";
 
 export type CanvasBrowserController = {
   getUrl: () => string;
   getTitle: () => string;
-  getDomSnapshot: () => Promise<CanvasBrowserDomSnapshot>;
+  getDomSnapshot: () => Promise<BrowserDomSnapshot>;
 };
 
 const controllers = new Map<string, CanvasBrowserController>();
@@ -30,6 +26,3 @@ export function getCanvasBrowserController(
   return controllers.get(paneId);
 }
 
-export function hasCanvasBrowserController(paneId: string): boolean {
-  return controllers.has(paneId);
-}

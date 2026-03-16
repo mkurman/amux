@@ -522,7 +522,8 @@ fn pty_reader_loop(
                             }
                         }
                         CommandLifecycleMarker::Cwd(dir) => {
-                            *tracked_cwd.lock().unwrap() = Some(dir);
+                            *tracked_cwd.lock().unwrap() = Some(dir.clone());
+                            let _ = tx.send(DaemonMessage::CwdChanged { id, cwd: dir });
                         }
                     }
                 }

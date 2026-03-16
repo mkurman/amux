@@ -11,7 +11,7 @@ import {
   resolveDuplicateBootstrapCommand,
   resolveDuplicateSourceSessionId,
 } from "../lib/paneDuplication";
-import { useWorkspaceStore } from "../lib/workspaceStore";
+import { shortenHomePath, useWorkspaceStore } from "../lib/workspaceStore";
 import { AppConfirmDialog } from "./AppConfirmDialog";
 import { SidebarActions } from "./sidebar/SidebarActions";
 import { SidebarHeader } from "./sidebar/SidebarHeader";
@@ -899,8 +899,11 @@ export function Sidebar() {
                                 const paneName = surface.paneNames[paneId] ?? paneId;
                                 const paneIcon = normalizeIconId(surface.paneIcons[paneId]);
                                 const paneAttentionCount = attentionByPane.get(paneId) ?? 0;
+                                const canvasPanel = surface.canvasPanels?.find((p) => p.paneId === paneId);
+                                const paneCwd = canvasPanel?.cwd ?? null;
+                                const panelType = canvasPanel?.panelType ?? "terminal";
                                 const needsApproval = paneAttentionCount > 0
-                                  || surface.canvasPanels.find((panel) => panel.paneId === paneId)?.status === "needs_approval";
+                                  || canvasPanel?.status === "needs_approval";
                                 const editing = editingPaneId === paneId;
 
                                 return (
@@ -951,43 +954,62 @@ export function Sidebar() {
                                       }}
                                       style={paneNodeButtonStyle(needsApproval)}
                                     >
-                                      <span style={{ opacity: 0.9 }}>{iconGlyph(paneIcon)}</span>
+                                      <span style={{ opacity: 0.9, flexShrink: 0 }}>
+                                        {panelType === "browser" ? "🌐" : iconGlyph(paneIcon)}
+                                      </span>
                                       {needsApproval ? <span style={pendingDotStyle} /> : null}
-                                      {editing ? (
-                                        <input
-                                          autoFocus
-                                          value={paneNameDraft}
-                                          onChange={(event) => setPaneNameDraft(event.target.value)}
-                                          onBlur={() => {
-                                            if (paneNameDraft.trim()) {
-                                              setPaneName(paneId, paneNameDraft);
-                                            }
-                                            setEditingPaneId(null);
-                                          }}
-                                          onKeyDown={(event) => {
-                                            if (event.key === "Enter") {
+                                      <div style={{ display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, flex: 1, gap: 0 }}>
+                                        {editing ? (
+                                          <input
+                                            autoFocus
+                                            value={paneNameDraft}
+                                            onChange={(event) => setPaneNameDraft(event.target.value)}
+                                            onBlur={() => {
                                               if (paneNameDraft.trim()) {
                                                 setPaneName(paneId, paneNameDraft);
                                               }
                                               setEditingPaneId(null);
-                                            }
-                                            if (event.key === "Escape") {
-                                              setEditingPaneId(null);
-                                            }
-                                          }}
-                                          style={paneRenameInputStyle}
-                                        />
-                                      ) : (
-                                        <span
-                                          onDoubleClick={() => {
-                                            setEditingPaneId(paneId);
-                                            setPaneNameDraft(paneName);
-                                          }}
-                                          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                                        >
-                                          {paneName}
-                                        </span>
-                                      )}
+                                            }}
+                                            onKeyDown={(event) => {
+                                              if (event.key === "Enter") {
+                                                if (paneNameDraft.trim()) {
+                                                  setPaneName(paneId, paneNameDraft);
+                                                }
+                                                setEditingPaneId(null);
+                                              }
+                                              if (event.key === "Escape") {
+                                                setEditingPaneId(null);
+                                              }
+                                            }}
+                                            style={paneRenameInputStyle}
+                                          />
+                                        ) : (
+                                          <span
+                                            onDoubleClick={() => {
+                                              setEditingPaneId(paneId);
+                                              setPaneNameDraft(paneName);
+                                            }}
+                                            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.3 }}
+                                          >
+                                            {paneName}
+                                          </span>
+                                        )}
+                                        {paneCwd ? (
+                                          <span style={{
+                                            color: "var(--text-muted)",
+                                            fontSize: "9px",
+                                            whiteSpace: "nowrap",
+                                            overflow: "hidden",
+                                            textOverflow: "ellipsis",
+                                            lineHeight: 1.2,
+                                          }}>
+                                            {shortenHomePath(paneCwd)}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <span style={{ color: "var(--text-muted)", opacity: 0.4, fontSize: "8px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                                        {paneId.slice(0, 8)}
+                                      </span>
                                       {paneAttentionCount > 0 ? (
                                         <span style={paneCountBadgeStyle(needsApproval)}>
                                           {paneAttentionCount > 9 ? "9+" : paneAttentionCount}

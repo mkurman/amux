@@ -44,6 +44,8 @@ export interface CanvasPanel {
   status: CanvasPanelStatus;
   sessionId: SessionId | null;
   url: string | null;
+  cwd: string | null;
+  userRenamed: boolean;
   lastActivityAt: number;
 }
 
@@ -362,6 +364,8 @@ export interface PersistedCanvasPanel {
   status: CanvasPanelStatus;
   sessionId: SessionId | null;
   url?: string | null;
+  cwd?: string | null;
+  userRenamed?: boolean;
   lastActivityAt: number;
 }
 

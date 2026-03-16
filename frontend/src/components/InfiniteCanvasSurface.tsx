@@ -20,7 +20,7 @@ import {
 } from "../lib/paneDuplication";
 import type { Surface } from "../lib/types";
 import { iconChoices, PANE_ICON_IDS } from "../lib/iconRegistry";
-import { useWorkspaceStore } from "../lib/workspaceStore";
+import { shortenHomePath, useWorkspaceStore } from "../lib/workspaceStore";
 import { AppConfirmDialog } from "./AppConfirmDialog";
 import { TerminalPane } from "./TerminalPane";
 import { CanvasBrowserPane } from "./web-browser-panel/CanvasBrowserPane";
@@ -87,6 +87,7 @@ export function InfiniteCanvasSurface({ surface }: InfiniteCanvasSurfaceProps) {
   const [marquee, setMarquee] = useState<CanvasMarqueeState | null>(null);
   const dragGroupBaseRef = useRef<Map<string, { x: number; y: number }> | null>(null);
   const createCanvasPanel = useWorkspaceStore((s) => s.createCanvasPanel);
+  const renameCanvasPanel = useWorkspaceStore((s) => s.renameCanvasPanel);
   const createSurface = useWorkspaceStore((s) => s.createSurface);
   const renameSurface = useWorkspaceStore((s) => s.renameSurface);
   const arrangeCanvasPanels = useWorkspaceStore((s) => s.arrangeCanvasPanels);
@@ -910,7 +911,7 @@ export function InfiniteCanvasSurface({ surface }: InfiniteCanvasSurfaceProps) {
               {panel.panelType === "browser" ? (
                 <CanvasBrowserPane paneId={panel.paneId} initialUrl={panel.url ?? "https://google.com"} />
               ) : (
-                <TerminalPane paneId={panel.paneId} sessionId={panel.sessionId ?? undefined} />
+                <TerminalPane paneId={panel.paneId} sessionId={panel.sessionId ?? undefined} hideHeader />
               )}
             </CanvasPanelShell>
           );
@@ -1110,6 +1111,23 @@ export function InfiniteCanvasSurface({ surface }: InfiniteCanvasSurfaceProps) {
           >
             Zoom In
           </button>
+          {contextPaneIds.length === 1 ? (
+            <button
+              type="button"
+              style={contextMenuItemStyle}
+              onClick={() => {
+                const id = contextPaneIds[0];
+                const current = panelByPane.get(id);
+                const name = prompt("Rename panel:", current?.title ?? "");
+                if (name != null && name.trim()) {
+                  renameCanvasPanel(id, name.trim());
+                }
+                setContextMenu(null);
+              }}
+            >
+              Rename Panel
+            </button>
+          ) : null}
           <button
             type="button"
             style={contextMenuItemStyle}
@@ -1277,11 +1295,13 @@ function CanvasPanelShell({
   panel: {
     paneId: string;
     title: string;
+    panelType: import("../lib/types").CanvasPanelType;
     x: number;
     y: number;
     width: number;
     height: number;
     status: string;
+    cwd: string | null;
   };
   zoomLevel: number;
   active: boolean;
@@ -1470,7 +1490,7 @@ function CanvasPanelShell({
           onDoubleClick();
         }}
         style={{
-          height: 28,
+          height: 32,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -1493,8 +1513,48 @@ function CanvasPanelShell({
           textTransform: "uppercase",
         }}
       >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{panel.title}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 12, overflow: "hidden", minWidth: 0 }}>
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            width: "100%",
+            height: "100%",
+            background: "transparent",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              display: "flex",
+              flexDirection: "row",
+              fontSize: "9px",
+              width: "100%",
+              height: "100%",
+              gap: 2,
+              background: "transparent",
+              overflow: "hidden",
+            }}>
+              {panel.panelType === "browser" ? "🌐" : "🖥️"}
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 1, minWidth: 0 }}>{panel.title}</span>
+
+            </div>
+            {panel.cwd ? (
+              <span style={{
+                color: "var(--text-muted)",
+                fontSize: "7px",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textTransform: "none",
+                flexShrink: 2,
+                minWidth: 0,
+              }}>
+                {shortenHomePath(panel.cwd)}
+              </span>
+            ) : null}
+          </div>
+          <span style={{ color: "var(--text-muted)", opacity: 0.5, fontSize: "7px", whiteSpace: "nowrap", flexShrink: 0 }}>{panel.paneId.slice(0, 8)}</span>
+
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {panel.status === "needs_approval" ? (
             <span style={{ color: "var(--approval)", fontWeight: 700 }}>action required</span>
           ) : null}

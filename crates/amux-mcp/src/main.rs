@@ -622,52 +622,9 @@ async fn tool_list_sessions(_args: &Value) -> Result<Value> {
         .and_then(|data| serde_json::from_str(&data).ok());
 
     if let Some(topology) = topology {
-        let session_map: std::collections::HashMap<String, &amux_protocol::SessionInfo> = sessions
-            .iter()
-            .filter_map(|s| Some((s.id.to_string(), s)))
-            .collect();
-
-        let mut lines = Vec::new();
-        for ws in &topology.workspaces {
-            lines.push(format!("Workspace \"{}\":", ws.workspace_name));
-            for sf in &ws.surfaces {
-                let active_tag = if sf.is_active { " (active)" } else { "" };
-                lines.push(format!(
-                    "  Surface \"{}\" ({}{}):",
-                    sf.surface_name, sf.layout_mode, active_tag
-                ));
-                for pane in &sf.panes {
-                    let active_tag = if pane.is_active { " (active)" } else { "" };
-                    let mut parts = vec![format!(
-                        "    - {} [{}] type={}",
-                        pane.pane_name, pane.pane_id, pane.pane_type
-                    )];
-                    if pane.pane_type == "browser" {
-                        if let Some(url) = &pane.url {
-                            parts.push(format!("url={url}"));
-                        }
-                        if let Some(title) = &pane.title {
-                            parts.push(format!("title={title}"));
-                        }
-                    } else if let Some(sid) = &pane.session_id {
-                        parts.push(format!("session={sid}"));
-                        if let Some(s) = session_map.get(sid) {
-                            parts.push(format!("cwd={}", s.cwd.as_deref().unwrap_or("?")));
-                            if let Some(cmd) = s.active_command.as_deref() {
-                                parts.push(format!("cmd={cmd}"));
-                            }
-                        }
-                    }
-                    if !active_tag.is_empty() {
-                        parts.push(active_tag.trim().to_string());
-                    }
-                    lines.push(parts.join(" "));
-                }
-            }
-        }
-
-        if !lines.is_empty() {
-            return Ok(serde_json::json!({ "topology": lines.join("\n") }));
+        let formatted = amux_protocol::format_topology(&topology, &sessions);
+        if !formatted.is_empty() {
+            return Ok(serde_json::json!({ "topology": formatted }));
         }
     }
 

@@ -115,6 +115,10 @@ enum BridgeEvent {
         session_id: String,
         exit_code: Option<i32>,
     },
+    CwdChanged {
+        session_id: String,
+        cwd: String,
+    },
     ManagedQueued {
         session_id: String,
         execution_id: String,
@@ -548,6 +552,12 @@ pub async fn run_bridge(
                         emit_bridge_event(BridgeEvent::CommandFinished {
                             session_id: id.to_string(),
                             exit_code,
+                        })?;
+                    }
+                    Some(Ok(DaemonMessage::CwdChanged { id, cwd })) if id == session_id => {
+                        emit_bridge_event(BridgeEvent::CwdChanged {
+                            session_id: id.to_string(),
+                            cwd,
                         })?;
                     }
                     Some(Ok(DaemonMessage::ManagedCommandQueued { id, execution_id, position, snapshot })) if id == session_id => {

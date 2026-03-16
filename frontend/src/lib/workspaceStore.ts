@@ -132,6 +132,11 @@ function sanitizeCanvasState(value: Partial<CanvasState> | undefined): CanvasSta
   };
 }
 
+/** Shorten an absolute CWD path for display (e.g. /home/user/foo → ~/foo). */
+export function shortenHomePath(cwd: string): string {
+  return cwd.replace(/^\/(?:home|Users)\/[^/]+/, "~");
+}
+
 function defaultCanvasPanelPosition(index: number): { x: number; y: number } {
   const col = index % 3;
   const row = Math.floor(index / 3);
@@ -168,6 +173,8 @@ function buildCanvasPanel(opts: {
     sessionId: typeof opts.persisted?.sessionId === "string" ? opts.persisted.sessionId : null,
     panelType: opts.persisted?.panelType ?? "terminal",
     url: opts.persisted?.url ?? null,
+    cwd: opts.persisted?.cwd ?? null,
+    userRenamed: opts.persisted?.userRenamed ?? false,
     lastActivityAt: Number.isFinite(opts.persisted?.lastActivityAt)
       ? Number(opts.persisted?.lastActivityAt)
       : Date.now(),
@@ -667,6 +674,8 @@ export interface WorkspaceState {
   ) => PaneId | null;
   updateCanvasPanelUrl: (paneId: PaneId, url: string) => void;
   updateCanvasPanelTitle: (paneId: PaneId, title: string) => void;
+  updateCanvasPanelCwd: (paneId: PaneId, cwd: string) => void;
+  renameCanvasPanel: (paneId: PaneId, name: string) => void;
   moveCanvasPanel: (paneId: PaneId, x: number, y: number) => void;
   resizeCanvasPanel: (paneId: PaneId, width: number, height: number) => void;
   arrangeCanvasPanels: (surfaceId?: SurfaceId) => void;
@@ -1686,14 +1695,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     updateCanvasPanelTitle: (paneId, title) => {
       const pair = findWsSurfaceAndPane(paneId);
       if (!pair || pair.sf.layoutMode !== "canvas") return;
+      const current = pair.sf.canvasPanels.find((p) => p.paneId === paneId);
+      if (current?.userRenamed || current?.title === title) return;
       updateSurface(pair.sf.id, (s) => ({
         ...s,
         canvasPanels: s.canvasPanels.map((panel) =>
-          panel.paneId === paneId
+          panel.paneId === paneId && !panel.userRenamed
             ? { ...panel, title, lastActivityAt: Date.now() }
             : panel
         ),
         paneNames: { ...s.paneNames, [paneId]: title },
+      }));
+    },
+
+    updateCanvasPanelCwd: (paneId, cwd) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      const current = pair.sf.canvasPanels.find((p) => p.paneId === paneId);
+      if (current?.cwd === cwd) return;
+      updateSurface(pair.sf.id, (s) => ({
+        ...s,
+        canvasPanels: s.canvasPanels.map((panel) =>
+          panel.paneId === paneId
+            ? { ...panel, cwd, lastActivityAt: Date.now() }
+            : panel
+        ),
+      }));
+    },
+
+    renameCanvasPanel: (paneId, name) => {
+      const pair = findWsSurfaceAndPane(paneId);
+      if (!pair || pair.sf.layoutMode !== "canvas") return;
+      updateSurface(pair.sf.id, (s) => ({
+        ...s,
+        canvasPanels: s.canvasPanels.map((panel) =>
+          panel.paneId === paneId
+            ? { ...panel, title: name, userRenamed: true, lastActivityAt: Date.now() }
+            : panel
+        ),
+        paneNames: { ...s.paneNames, [paneId]: name },
       }));
     },
 

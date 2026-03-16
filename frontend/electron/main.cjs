@@ -1473,6 +1473,15 @@ async function startTerminalBridge(_event, options = {}) {
                 continue;
             }
 
+            if (event.type === 'cwd-changed') {
+                emitTerminalEvent(paneId, {
+                    type: 'cwd-changed',
+                    sessionId: event.session_id,
+                    cwd: event.cwd,
+                });
+                continue;
+            }
+
             if (event.type === 'managed-queued') {
                 emitTerminalEvent(paneId, {
                     type: 'managed-queued',

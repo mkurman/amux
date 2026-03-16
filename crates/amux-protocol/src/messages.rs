@@ -427,6 +427,61 @@ pub struct PaneTopologyEntry {
     pub session_id: Option<String>,
     pub url: Option<String>,
     pub title: Option<String>,
+    pub cwd: Option<String>,
+}
+
+/// Format a workspace topology into a human-readable string, enriched with
+/// session metadata (CWD, active command) where available.
+pub fn format_topology(topology: &WorkspaceTopology, sessions: &[SessionInfo]) -> String {
+    let session_map: std::collections::HashMap<String, &SessionInfo> = sessions
+        .iter()
+        .map(|s| (s.id.to_string(), s))
+        .collect();
+
+    let mut lines = Vec::new();
+    for ws in &topology.workspaces {
+        lines.push(format!("Workspace \"{}\":", ws.workspace_name));
+        for sf in &ws.surfaces {
+            let active_tag = if sf.is_active { " (active)" } else { "" };
+            lines.push(format!(
+                "  Surface \"{}\" ({}{}):",
+                sf.surface_name, sf.layout_mode, active_tag
+            ));
+            for pane in &sf.panes {
+                let active_tag = if pane.is_active { " (active)" } else { "" };
+                let mut parts = vec![format!(
+                    "    - {} [{}] type={}",
+                    pane.pane_name, pane.pane_id, pane.pane_type
+                )];
+                if pane.pane_type == "browser" {
+                    if let Some(url) = &pane.url {
+                        parts.push(format!("url={url}"));
+                    }
+                    if let Some(title) = &pane.title {
+                        parts.push(format!("title={title}"));
+                    }
+                } else if let Some(sid) = &pane.session_id {
+                    parts.push(format!("session={sid}"));
+                    // Prefer panel-level CWD (live from shell integration), fall back to session CWD.
+                    let cwd = pane.cwd.as_deref()
+                        .or_else(|| session_map.get(sid).and_then(|s| s.cwd.as_deref()));
+                    if let Some(cwd) = cwd {
+                        parts.push(format!("cwd={cwd}"));
+                    }
+                    if let Some(s) = session_map.get(sid) {
+                        if let Some(cmd) = s.active_command.as_deref() {
+                            parts.push(format!("cmd={cmd}"));
+                        }
+                    }
+                }
+                if !active_tag.is_empty() {
+                    parts.push(active_tag.trim().to_string());
+                }
+                lines.push(parts.join(" "));
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 /// OSC notification payload (parsed from OSC 9, 99, 777).
