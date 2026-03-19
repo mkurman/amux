@@ -260,9 +260,25 @@ impl ChatState {
 
             ChatAction::ThreadDetailReceived(incoming) => {
                 if let Some(existing) = self.threads.iter_mut().find(|t| t.id == incoming.id) {
-                    // Merge: use incoming if it has more messages
-                    if incoming.messages.len() >= existing.messages.len() {
-                        *existing = incoming;
+                    // Merge: keep local user messages, add incoming messages
+                    let local_user_msgs: Vec<AgentMessage> = existing.messages.iter()
+                        .filter(|m| m.role == MessageRole::User)
+                        .cloned()
+                        .collect();
+                    let mut merged = local_user_msgs;
+                    // Add incoming messages that aren't already present
+                    for msg in incoming.messages {
+                        if !merged.iter().any(|m| m.content == msg.content && m.role == msg.role) {
+                            merged.push(msg);
+                        }
+                    }
+                    // Sort by timestamp (0 timestamps go last)
+                    merged.sort_by_key(|m| if m.timestamp == 0 { u64::MAX } else { m.timestamp });
+                    existing.messages = merged;
+                    existing.total_input_tokens = incoming.total_input_tokens.max(existing.total_input_tokens);
+                    existing.total_output_tokens = incoming.total_output_tokens.max(existing.total_output_tokens);
+                    if !incoming.title.is_empty() {
+                        existing.title = incoming.title;
                     }
                 } else {
                     self.threads.push(incoming);
@@ -270,12 +286,35 @@ impl ChatState {
             }
 
             ChatAction::ThreadCreated { thread_id, title } => {
-                let thread = AgentThread {
-                    id: thread_id.clone(),
-                    title,
-                    ..Default::default()
-                };
-                self.threads.push(thread);
+                // Transfer messages from any local pending thread to the real thread
+                let local_messages = self.active_thread()
+                    .map(|t| t.messages.clone())
+                    .unwrap_or_default();
+
+                // Remove local thread if it exists (it was a placeholder)
+                if let Some(active_id) = &self.active_thread_id {
+                    if active_id.starts_with("local-") {
+                        self.threads.retain(|t| t.id != *active_id);
+                    }
+                }
+
+                // Check if thread already exists (avoid duplicates)
+                if let Some(existing) = self.threads.iter_mut().find(|t| t.id == thread_id) {
+                    // Merge local messages into existing
+                    for msg in &local_messages {
+                        if !existing.messages.iter().any(|m| m.content == msg.content && m.role == msg.role) {
+                            existing.messages.insert(0, msg.clone());
+                        }
+                    }
+                } else {
+                    let thread = AgentThread {
+                        id: thread_id.clone(),
+                        title,
+                        messages: local_messages,
+                        ..Default::default()
+                    };
+                    self.threads.push(thread);
+                }
                 self.active_thread_id = Some(thread_id);
             }
 
