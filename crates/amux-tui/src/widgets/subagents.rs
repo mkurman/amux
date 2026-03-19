@@ -1,7 +1,7 @@
 use crate::theme::{ThemeTokens, FG_CLOSE};
 use crate::state::task::{TaskState, TaskStatus, GoalRunStatus};
 use crate::state::sidebar::SidebarState;
-use super::pad_to_width;
+use super::{pad_to_width, fit_to_width};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ pub fn subagents_widget(
                 _ => format!("{}idle{}", theme.fg_dim.fg(), FG_CLOSE),
             },
         );
-        lines.push(pad_to_width(&parent_line, width));
+        lines.push(fit_to_width(&parent_line, width));
 
         if expanded {
             // Tasks that belong to this goal run
@@ -104,13 +104,13 @@ pub fn subagents_widget(
                 let none_line = format!(
                     "  {}(no tasks){}", theme.fg_dim.fg(), FG_CLOSE
                 );
-                lines.push(pad_to_width(&none_line, width));
+                lines.push(fit_to_width(&none_line, width));
             } else {
                 for task in child_tasks {
                     let dot = status_dot_for_task(task.status, theme);
                     let status_lbl = status_label_for_task(task.status, theme);
                     let task_line = format!("  {} {} {}", dot, task.title, status_lbl);
-                    lines.push(pad_to_width(&task_line, width));
+                    lines.push(fit_to_width(&task_line, width));
 
                     // If there's a session thread, show it as └ thread: <id>
                     if let Some(ref session_id) = task.session_id {
@@ -120,7 +120,7 @@ pub fn subagents_widget(
                             session_id,
                             FG_CLOSE
                         );
-                        lines.push(pad_to_width(&thread_line, width));
+                        lines.push(fit_to_width(&thread_line, width));
                     }
                 }
             }
@@ -144,14 +144,14 @@ pub fn subagents_widget(
             theme.fg_active.fg(),
             FG_CLOSE,
         );
-        lines.push(pad_to_width(&daemon_header, width));
+        lines.push(fit_to_width(&daemon_header, width));
 
         if expanded {
             for task in daemon_tasks {
                 let dot = status_dot_for_task(task.status, theme);
                 let status_lbl = status_label_for_task(task.status, theme);
                 let task_line = format!("  {} {} {}", dot, task.title, status_lbl);
-                lines.push(pad_to_width(&task_line, width));
+                lines.push(fit_to_width(&task_line, width));
             }
         }
     }
@@ -159,7 +159,7 @@ pub fn subagents_widget(
     // ── Empty state ───────────────────────────────────────────────────────────
     if lines.is_empty() {
         let empty = format!(" {}No agents{}", theme.fg_dim.fg(), FG_CLOSE);
-        lines.push(pad_to_width(&empty, width));
+        lines.push(fit_to_width(&empty, width));
     }
 
     // ── Footer aggregate counts ───────────────────────────────────────────────
@@ -179,7 +179,7 @@ pub fn subagents_widget(
             total_count,
             FG_CLOSE,
         );
-        lines.push(pad_to_width(&footer, width));
+        lines.push(fit_to_width(&footer, width));
     }
 
     // ── Truncate / pad to height ──────────────────────────────────────────────

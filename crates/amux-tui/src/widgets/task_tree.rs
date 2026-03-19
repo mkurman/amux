@@ -1,7 +1,7 @@
 use crate::theme::{ThemeTokens, FG_CLOSE};
 use crate::state::task::{TaskState, TaskStatus, GoalRunStatus, HeartbeatOutcome};
 use crate::state::sidebar::SidebarState;
-use super::pad_to_width;
+use super::{pad_to_width, fit_to_width};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ pub fn task_tree_widget(
             dot,
             status_label,
         );
-        lines.push(pad_to_width(&header, width));
+        lines.push(fit_to_width(&header, width));
 
         if expanded {
             // Sort steps by order
@@ -124,7 +124,7 @@ pub fn task_tree_widget(
                 };
                 let step_line =
                     format!("  {} {}", chip, step.title);
-                lines.push(pad_to_width(&step_line, width));
+                lines.push(fit_to_width(&step_line, width));
             }
         }
     }
@@ -139,19 +139,19 @@ pub fn task_tree_widget(
     if !standalone.is_empty() {
         if !goal_runs.is_empty() {
             // separator
-            lines.push(pad_to_width(&separator_line(width, theme), width));
+            lines.push(fit_to_width(&separator_line(width, theme), width));
         }
         let section_header = format!(
             "{}Standalone Tasks{}",
             theme.fg_dim.fg(),
             FG_CLOSE
         );
-        lines.push(pad_to_width(&section_header, width));
+        lines.push(fit_to_width(&section_header, width));
 
         for task in standalone {
             let chip = task_status_chip(task.status, theme);
             let task_line = format!("  {} {}", chip, task.title);
-            lines.push(pad_to_width(&task_line, width));
+            lines.push(fit_to_width(&task_line, width));
         }
     }
 
@@ -159,9 +159,9 @@ pub fn task_tree_widget(
     let heartbeat_items = tasks.heartbeat_items();
 
     if !heartbeat_items.is_empty() {
-        lines.push(pad_to_width(&separator_line(width, theme), width));
+        lines.push(fit_to_width(&separator_line(width, theme), width));
         let hb_header = format!("{}♥ Heartbeat{}", theme.accent_danger.fg(), FG_CLOSE);
-        lines.push(pad_to_width(&hb_header, width));
+        lines.push(fit_to_width(&hb_header, width));
 
         for item in heartbeat_items {
             let dot = heartbeat_dot(item.outcome, theme);
@@ -180,14 +180,14 @@ pub fn task_tree_widget(
                 FG_CLOSE,
             );
             let hb_line = format!("{}{}", hb_line, warn);
-            lines.push(pad_to_width(&hb_line, width));
+            lines.push(fit_to_width(&hb_line, width));
         }
     }
 
     // ── Empty state ───────────────────────────────────────────────────────────
     if lines.is_empty() {
         let empty = format!(" {}No tasks{}", theme.fg_dim.fg(), FG_CLOSE);
-        lines.push(pad_to_width(&empty, width));
+        lines.push(fit_to_width(&empty, width));
     }
 
     // ── Truncate / pad to height ──────────────────────────────────────────────

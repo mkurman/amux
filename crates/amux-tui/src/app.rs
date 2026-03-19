@@ -522,50 +522,25 @@ impl TuiModel {
         }
 
         // Command palette and thread picker allow typing for search
-        let is_searchable = matches!(kind, modal::ModalKind::CommandPalette | modal::ModalKind::ThreadPicker);
+        let is_searchable = matches!(
+            kind,
+            modal::ModalKind::CommandPalette | modal::ModalKind::ThreadPicker
+        );
 
         match code {
             KeyCode::Escape => {
                 self.modal.reduce(modal::ModalAction::Pop);
                 self.input.reduce(input::InputAction::Clear);
             }
-            KeyCode::Down => {
+            // Navigation: arrows AND j/k work in ALL modals
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.modal.reduce(modal::ModalAction::Navigate(1));
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 self.modal.reduce(modal::ModalAction::Navigate(-1));
             }
             KeyCode::Enter => {
-                if kind == modal::ModalKind::CommandPalette {
-                    // Grab the command name, pop the palette FIRST, then execute.
-                    // execute_command may push a sub-modal (e.g. ProviderPicker),
-                    // so we must pop the palette before that push.
-                    let cmd_name = self.modal.selected_command()
-                        .map(|c| c.command.clone());
-                    self.modal.reduce(modal::ModalAction::Pop);
-                    self.input.reduce(input::InputAction::Clear);
-                    if let Some(command) = cmd_name {
-                        self.execute_command(&command);
-                    }
-                } else if kind == modal::ModalKind::ThreadPicker {
-                    let cursor = self.modal.picker_cursor();
-                    self.modal.reduce(modal::ModalAction::Pop);
-                    self.input.reduce(input::InputAction::Clear);
-                    if cursor == 0 {
-                        self.chat.reduce(chat::ChatAction::NewThread);
-                    } else {
-                        let threads = self.chat.threads();
-                        if let Some(thread) = threads.get(cursor - 1) {
-                            let thread_id = thread.id.clone();
-                            self.chat.reduce(chat::ChatAction::SelectThread(thread_id.clone()));
-                            self.send_daemon_command(DaemonCommand::RequestThread(thread_id));
-                        }
-                    }
-                } else {
-                    // Generic modal: just pop
-                    self.modal.reduce(modal::ModalAction::Pop);
-                    self.input.reduce(input::InputAction::Clear);
-                }
+                self.handle_modal_enter(kind);
             }
             KeyCode::Backspace if is_searchable => {
                 self.input.reduce(input::InputAction::Backspace);
@@ -574,7 +549,6 @@ impl TuiModel {
                 ));
             }
             KeyCode::Char(c) if is_searchable => {
-                // Type into input buffer and update filter
                 self.input.reduce(input::InputAction::InsertChar(c));
                 self.modal.reduce(modal::ModalAction::SetQuery(
                     self.input.buffer().to_string(),
@@ -584,6 +558,85 @@ impl TuiModel {
         }
 
         Cmd::none()
+    }
+
+    fn handle_modal_enter(&mut self, kind: modal::ModalKind) {
+        match kind {
+            modal::ModalKind::CommandPalette => {
+                let cmd_name = self.modal.selected_command().map(|c| c.command.clone());
+                self.modal.reduce(modal::ModalAction::Pop);
+                self.input.reduce(input::InputAction::Clear);
+                if let Some(command) = cmd_name {
+                    self.execute_command(&command);
+                }
+            }
+            modal::ModalKind::ThreadPicker => {
+                let cursor = self.modal.picker_cursor();
+                self.modal.reduce(modal::ModalAction::Pop);
+                self.input.reduce(input::InputAction::Clear);
+                if cursor == 0 {
+                    self.chat.reduce(chat::ChatAction::NewThread);
+                    self.status_line = "New conversation".to_string();
+                } else {
+                    let threads = self.chat.threads();
+                    if let Some(thread) = threads.get(cursor - 1) {
+                        let tid = thread.id.clone();
+                        let title = thread.title.clone();
+                        self.chat.reduce(chat::ChatAction::SelectThread(tid.clone()));
+                        self.send_daemon_command(DaemonCommand::RequestThread(tid));
+                        self.status_line = format!("Thread: {}", title);
+                    }
+                }
+            }
+            modal::ModalKind::ProviderPicker => {
+                // Provider list is hardcoded in the widget; map cursor to provider name
+                let providers = [
+                    "openai", "anthropic", "groq", "ollama", "together",
+                    "deepinfra", "cerebras", "zai", "kimi", "qwen",
+                    "minimax", "openrouter", "custom",
+                ];
+                let cursor = self.modal.picker_cursor();
+                if let Some(&provider) = providers.get(cursor) {
+                    self.config.reduce(config::ConfigAction::SetProvider(provider.to_string()));
+                    self.status_line = format!("Provider: {}", provider);
+                    // Sync to daemon
+                    if let Ok(json) = serde_json::to_string(&serde_json::json!({
+                        "provider": provider,
+                    })) {
+                        self.send_daemon_command(DaemonCommand::SetConfigJson(json));
+                    }
+                }
+                self.modal.reduce(modal::ModalAction::Pop);
+            }
+            modal::ModalKind::ModelPicker => {
+                let cursor = self.modal.picker_cursor();
+                let models = self.config.fetched_models();
+                if models.is_empty() {
+                    // Fetch models from daemon
+                    self.send_daemon_command(DaemonCommand::FetchModels {
+                        provider_id: self.config.provider.clone(),
+                        base_url: self.config.base_url.clone(),
+                        api_key: self.config.api_key.clone(),
+                    });
+                    self.status_line = "Fetching models...".to_string();
+                } else if let Some(model) = models.get(cursor) {
+                    let model_id = model.id.clone();
+                    self.config.reduce(config::ConfigAction::SetModel(model_id.clone()));
+                    self.status_line = format!("Model: {}", model_id);
+                    if let Ok(json) = serde_json::to_string(&serde_json::json!({
+                        "model": model_id,
+                    })) {
+                        self.send_daemon_command(DaemonCommand::SetConfigJson(json));
+                    }
+                }
+                self.modal.reduce(modal::ModalAction::Pop);
+            }
+            _ => {
+                // Generic: just pop
+                self.modal.reduce(modal::ModalAction::Pop);
+                self.input.reduce(input::InputAction::Clear);
+            }
+        }
     }
 
     fn execute_command(&mut self, command: &str) {
