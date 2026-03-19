@@ -98,27 +98,8 @@ pub fn render(
         }
     }
 
-    // Append active tool calls (after reasoning, before final response)
-    for tc in chat.active_tool_calls() {
-        let status_span = match tc.status {
-            crate::state::chat::ToolCallStatus::Running => {
-                Span::styled(" \u{25cf} running", theme.accent_secondary)
-            }
-            crate::state::chat::ToolCallStatus::Done => {
-                Span::styled(" \u{2713} done", theme.accent_success)
-            }
-            crate::state::chat::ToolCallStatus::Error => {
-                Span::styled(" \u{2717} error", theme.accent_danger)
-            }
-        };
-        all_lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled("\u{2699}", theme.accent_assistant),
-            Span::raw(" "),
-            Span::styled(&tc.name, theme.fg_active),
-            status_span,
-        ]));
-    }
+    // Tool calls are now inline in the message timeline (pushed on ToolCall event)
+    // No separate active_tool_calls rendering needed.
 
     // Append streaming content last (final response)
     if !chat.streaming_content().is_empty() {

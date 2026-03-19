@@ -279,11 +279,54 @@ impl ChatState {
                 self.streaming_reasoning.push_str(&content);
             }
 
-            ChatAction::ToolCall { thread_id: _, call_id, name, args } => {
+            ChatAction::ToolCall { thread_id, call_id, name, args } => {
+                // Flush any accumulated streaming content as an ASST message first
+                // (the assistant said something before calling the tool)
+                if !self.streaming_content.is_empty() {
+                    let content = std::mem::take(&mut self.streaming_content);
+                    let reasoning = if self.streaming_reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(std::mem::take(&mut self.streaming_reasoning))
+                    };
+                    if let Some(thread) = self.threads.iter_mut().find(|t| t.id == thread_id) {
+                        thread.messages.push(AgentMessage {
+                            role: MessageRole::Assistant,
+                            content,
+                            reasoning,
+                            ..Default::default()
+                        });
+                    }
+                } else if !self.streaming_reasoning.is_empty() {
+                    // Reasoning without content — attach to a placeholder ASST message
+                    let reasoning = std::mem::take(&mut self.streaming_reasoning);
+                    if let Some(thread) = self.threads.iter_mut().find(|t| t.id == thread_id) {
+                        thread.messages.push(AgentMessage {
+                            role: MessageRole::Assistant,
+                            content: String::new(),
+                            reasoning: Some(reasoning),
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                // Push tool call as a TOOL message immediately (running status)
+                if let Some(thread) = self.threads.iter_mut().find(|t| t.id == thread_id) {
+                    thread.messages.push(AgentMessage {
+                        role: MessageRole::Tool,
+                        tool_name: Some(name.clone()),
+                        tool_call_id: Some(call_id.clone()),
+                        tool_arguments: Some(args),
+                        tool_status: Some("running".to_string()),
+                        ..Default::default()
+                    });
+                }
+
+                // Still track in active_tool_calls for status updates
                 self.active_tool_calls.push(ToolCallVm {
                     call_id,
                     name,
-                    arguments: args,
+                    arguments: String::new(),
                     status: ToolCallStatus::Running,
                     result: None,
                     is_error: false,
@@ -291,11 +334,22 @@ impl ChatState {
                 });
             }
 
-            ChatAction::ToolResult { thread_id: _, call_id, name: _, content, is_error } => {
+            ChatAction::ToolResult { thread_id, call_id, name: _, content, is_error } => {
+                // Update the active tracker
                 if let Some(tc) = self.active_tool_calls.iter_mut().find(|tc| tc.call_id == call_id) {
                     tc.status = if is_error { ToolCallStatus::Error } else { ToolCallStatus::Done };
-                    tc.result = Some(content);
+                    tc.result = Some(content.clone());
                     tc.is_error = is_error;
+                }
+
+                // Update the TOOL message in the thread
+                if let Some(thread) = self.threads.iter_mut().find(|t| t.id == thread_id) {
+                    if let Some(msg) = thread.messages.iter_mut().rev()
+                        .find(|m| m.role == MessageRole::Tool && m.tool_call_id.as_deref() == Some(&call_id))
+                    {
+                        msg.tool_status = Some(if is_error { "error".to_string() } else { "done".to_string() });
+                        msg.content = content;
+                    }
                 }
             }
 
@@ -311,26 +365,9 @@ impl ChatState {
             } => {
                 // Only finalize if this is for the active thread
                 if self.active_thread_id.as_deref() == Some(&thread_id) {
-                    // First, persist active tool calls as Tool messages so they appear
-                    // in history with the same style as live indicators.
-                    let tool_calls = std::mem::take(&mut self.active_tool_calls);
-                    if let Some(thread) = self.threads.iter_mut().find(|t| t.id == thread_id) {
-                        for tc in tool_calls {
-                            let status_str = match tc.status {
-                                ToolCallStatus::Done => "done".to_string(),
-                                ToolCallStatus::Error => "error".to_string(),
-                                ToolCallStatus::Running => "done".to_string(), // treat unresolved as done
-                            };
-                            thread.messages.push(AgentMessage {
-                                role: MessageRole::Tool,
-                                tool_name: Some(tc.name),
-                                tool_status: Some(status_str),
-                                tool_arguments: Some(tc.arguments),
-                                content: tc.result.unwrap_or_default(),
-                                ..Default::default()
-                            });
-                        }
-                    }
+                    // Tool calls are already pushed to thread messages inline
+                    // (on ToolCall/ToolResult events). Just clear the tracker.
+                    self.active_tool_calls.clear();
 
                     let content = std::mem::take(&mut self.streaming_content);
                     let reasoning = std::mem::take(&mut self.streaming_reasoning);
