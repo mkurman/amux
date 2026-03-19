@@ -3,6 +3,7 @@ use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
 
+use crate::app::Attachment;
 use crate::state::input::InputState;
 use crate::theme::ThemeTokens;
 
@@ -14,6 +15,7 @@ pub fn render_input(
     theme: &ThemeTokens,
     focused: bool,
     modal_open: bool,
+    attachments: &[Attachment],
 ) {
     let border_style = if modal_open {
         theme.fg_dim
@@ -46,7 +48,22 @@ pub fn render_input(
         let cursor = "\u{2588}";
         let buf = input.buffer();
         let raw_lines: Vec<&str> = buf.split('\n').collect();
-        let mut lines: Vec<Line> = Vec::with_capacity(raw_lines.len());
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Show attachments if any
+        for att in attachments {
+            let size_str = if att.size_bytes > 1024 {
+                format!("{:.1} KB", att.size_bytes as f64 / 1024.0)
+            } else {
+                format!("{} B", att.size_bytes)
+            };
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled("\u{1f4ce} ", theme.accent_secondary),
+                Span::styled(att.filename.clone(), theme.fg_active),
+                Span::styled(format!(" ({})", size_str), theme.fg_dim),
+            ]));
+        }
 
         for (i, line_text) in raw_lines.iter().enumerate() {
             let is_first = i == 0;

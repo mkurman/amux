@@ -17,6 +17,16 @@ use crate::state::*;
 use crate::theme::ThemeTokens;
 use crate::widgets;
 
+// ── Public types ─────────────────────────────────────────────────────────────
+
+/// A file attached to the next outgoing message.
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    pub filename: String,
+    pub content: String,
+    pub size_bytes: usize,
+}
+
 // ── Helper types ─────────────────────────────────────────────────────────────
 
 /// Flat representation of a sidebar item for matching selected index to data.
@@ -73,6 +83,9 @@ pub struct TuiModel {
     // Double-Esc stream stop state
     pending_stop: bool,
     pending_stop_tick: u64,
+
+    // Pending file attachments (prepended to next submitted message)
+    attachments: Vec<Attachment>,
 }
 
 impl TuiModel {
@@ -111,6 +124,8 @@ impl TuiModel {
             pending_quit: false,
             pending_stop: false,
             pending_stop_tick: 0,
+
+            attachments: Vec::new(),
         }
     }
 
@@ -118,26 +133,90 @@ impl TuiModel {
         let _ = self.daemon_cmd_tx.send(command);
     }
 
-    /// Calculate the dynamic input area height based on buffer content.
-    /// Grows from 3 (border + 1 line + border) to a max of 10 rows.
+    /// Calculate the dynamic input area height based on buffer content and attachments.
+    /// Grows from 3 (border + 1 line + border) to a max of 12 rows.
     fn input_height(&self) -> u16 {
         let line_count = self.input.buffer().matches('\n').count() + 1;
-        (line_count + 2).clamp(3, 10) as u16 // +2 for borders, min 3, max 10
+        let attach_count = self.attachments.len();
+        (line_count + attach_count + 2).clamp(3, 12) as u16 // +2 for borders, min 3, max 12
     }
 
     /// Handle pasted text (from bracketed paste). Inserts all characters
     /// including newlines into the input buffer without triggering submit.
+    /// If the pasted text looks like a single file path that exists on disk,
+    /// auto-attaches the file instead of inserting the path as text.
     pub fn handle_paste(&mut self, text: String) {
         // Ensure focus is on input when pasting
         if self.focus != FocusArea::Input {
             self.focus = FocusArea::Input;
             self.input.set_mode(input::InputMode::Insert);
         }
+
+        let trimmed = text.trim();
+
+        // Check if pasted text is a single file path
+        if !trimmed.contains('\n') && (
+            trimmed.starts_with('/') ||
+            trimmed.starts_with('~') ||
+            trimmed.starts_with("C:\\") ||
+            trimmed.starts_with("D:\\")
+        ) {
+            let expanded = if trimmed.starts_with('~') {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_default();
+                trimmed.replacen('~', &home, 1)
+            } else {
+                trimmed.to_string()
+            };
+
+            if std::path::Path::new(&expanded).is_file() {
+                // It's a real file path — auto-attach it
+                self.attach_file(trimmed);
+                return;
+            }
+        }
+
+        // Normal text paste — insert into input buffer
         for c in text.chars() {
             if c == '\n' || c == '\r' {
                 self.input.reduce(input::InputAction::InsertNewline);
             } else {
                 self.input.reduce(input::InputAction::InsertChar(c));
+            }
+        }
+    }
+
+    /// Read a file at the given path (with ~ expansion) and add it to the pending attachments.
+    fn attach_file(&mut self, path: &str) {
+        let expanded = if path.starts_with('~') {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_default();
+            path.replacen('~', &home, 1)
+        } else {
+            path.to_string()
+        };
+
+        match std::fs::read_to_string(&expanded) {
+            Ok(content) => {
+                let size = content.len();
+                let filename = std::path::Path::new(&expanded)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| expanded.clone());
+                self.attachments.push(Attachment {
+                    filename: filename.clone(),
+                    content,
+                    size_bytes: size,
+                });
+                self.status_line = format!("Attached: {} ({} bytes)", filename, size);
+            }
+            Err(e) => {
+                self.status_line = format!("Failed to attach '{}': {}", path, e);
+                self.last_error = Some(format!("Attach failed: {}", e));
+                self.error_active = true;
+                self.error_tick = self.tick_counter;
             }
         }
     }
@@ -484,6 +563,7 @@ impl TuiModel {
             &self.theme,
             self.focus == FocusArea::Input,
             self.modal.top().is_some(),
+            &self.attachments,
         );
 
         // Render status bar (bare, below input)
@@ -973,6 +1053,8 @@ impl TuiModel {
                             })) {
                                 self.send_daemon_command(DaemonCommand::SetConfigJson(json));
                             }
+                        } else if cmd == "attach" && !args.is_empty() {
+                            self.attach_file(args);
                         } else {
                             self.execute_command(cmd);
                         }
@@ -1714,6 +1796,9 @@ impl TuiModel {
             "goal" => {
                 self.status_line = "Goal runs: type your goal as a message".to_string();
             }
+            "attach" => {
+                self.status_line = "Usage: /attach <path>  — attach a file to the next message".to_string();
+            }
             _ => self.status_line = format!("Unknown command: {}", command),
         }
     }
@@ -1723,6 +1808,17 @@ impl TuiModel {
             self.status_line = "Not connected to daemon".to_string();
             return;
         }
+
+        // Build final message content, prepending any pending attachments
+        let final_content = if self.attachments.is_empty() {
+            prompt.clone()
+        } else {
+            let mut parts: Vec<String> = self.attachments.drain(..)
+                .map(|att| format!("<attached_file name=\"{}\">\n{}\n</attached_file>", att.filename, att.content))
+                .collect();
+            parts.push(prompt.clone());
+            parts.join("\n\n")
+        };
 
         let thread_id = self.chat.active_thread_id().map(String::from);
 
@@ -1739,7 +1835,7 @@ impl TuiModel {
         if let Some(thread) = self.chat.active_thread_mut() {
             thread.messages.push(chat::AgentMessage {
                 role: chat::MessageRole::User,
-                content: prompt.clone(),
+                content: final_content.clone(),
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -1751,7 +1847,7 @@ impl TuiModel {
         // Send to daemon
         self.send_daemon_command(DaemonCommand::SendMessage {
             thread_id,
-            content: prompt,
+            content: final_content,
             session_id: self.default_session_id.clone(),
         });
 

@@ -137,6 +137,7 @@ fn default_command_items() -> Vec<CommandItem> {
         CommandItem { command: "view".into(), description: "Switch transcript mode".into() },
         CommandItem { command: "settings".into(), description: "Open settings panel".into() },
         CommandItem { command: "prompt".into(), description: "Edit system prompt".into() },
+        CommandItem { command: "attach".into(), description: "Attach a file to the message".into() },
         CommandItem { command: "quit".into(), description: "Exit TUI".into() },
     ]
 }
