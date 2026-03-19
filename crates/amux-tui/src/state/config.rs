@@ -55,6 +55,8 @@ pub struct ConfigState {
     pub firecrawl_api_key: String,
     pub exa_api_key: String,
     pub tavily_api_key: String,
+    pub search_max_results: u32,
+    pub search_timeout_secs: u32,
 
     // Gateway config
     pub gateway_enabled: bool,
@@ -85,6 +87,8 @@ impl ConfigState {
             firecrawl_api_key: String::new(),
             exa_api_key: String::new(),
             tavily_api_key: String::new(),
+            search_max_results: 8,
+            search_timeout_secs: 20,
             gateway_enabled: false,
             slack_token: String::new(),
             telegram_token: String::new(),

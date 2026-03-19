@@ -6,6 +6,7 @@
 pub enum SettingsTab {
     Provider,
     Tools,
+    WebSearch,
     Reasoning,
     Gateway,
     Agent,
@@ -15,6 +16,7 @@ impl SettingsTab {
     const ALL: &'static [SettingsTab] = &[
         SettingsTab::Provider,
         SettingsTab::Tools,
+        SettingsTab::WebSearch,
         SettingsTab::Reasoning,
         SettingsTab::Gateway,
         SettingsTab::Agent,
@@ -130,6 +132,16 @@ impl SettingsState {
                 6 => "tool_gateway",
                 _ => "",
             },
+            SettingsTab::WebSearch => match self.field_cursor {
+                0 => "web_search_enabled",
+                1 => "search_provider",
+                2 => "firecrawl_api_key",
+                3 => "exa_api_key",
+                4 => "tavily_api_key",
+                5 => "search_max_results",
+                6 => "search_timeout",
+                _ => "",
+            },
             SettingsTab::Reasoning => match self.field_cursor {
                 0 => "reasoning_effort",
                 _ => "",
@@ -156,6 +168,7 @@ impl SettingsState {
         match self.active_tab {
             SettingsTab::Provider => 5,
             SettingsTab::Tools => 7,
+            SettingsTab::WebSearch => 7,
             SettingsTab::Reasoning => 1,
             SettingsTab::Gateway => 5,
             SettingsTab::Agent => 3,
@@ -425,8 +438,8 @@ mod tests {
     }
 
     #[test]
-    fn all_tabs_covers_five_variants() {
-        assert_eq!(SettingsTab::all().len(), 5);
+    fn all_tabs_covers_six_variants() {
+        assert_eq!(SettingsTab::all().len(), 6);
     }
 
     #[test]
@@ -566,12 +579,33 @@ mod tests {
         assert_eq!(state.field_count(), 5); // Provider (provider, base_url, api_key, model, effort)
         state.reduce(SettingsAction::SwitchTab(SettingsTab::Tools));
         assert_eq!(state.field_count(), 7); // 7 tool checkboxes
+        state.reduce(SettingsAction::SwitchTab(SettingsTab::WebSearch));
+        assert_eq!(state.field_count(), 7); // enabled, provider, 3 keys, max_results, timeout
         state.reduce(SettingsAction::SwitchTab(SettingsTab::Reasoning));
         assert_eq!(state.field_count(), 1); // effort only
         state.reduce(SettingsAction::SwitchTab(SettingsTab::Gateway));
         assert_eq!(state.field_count(), 5); // enabled, slack, telegram, discord, prefix
         state.reduce(SettingsAction::SwitchTab(SettingsTab::Agent));
         assert_eq!(state.field_count(), 3); // name, prompt, backend
+    }
+
+    #[test]
+    fn current_field_name_websearch_tab() {
+        let mut state = SettingsState::new();
+        state.reduce(SettingsAction::SwitchTab(SettingsTab::WebSearch));
+        assert_eq!(state.current_field_name(), "web_search_enabled");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "search_provider");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "firecrawl_api_key");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "exa_api_key");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "tavily_api_key");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "search_max_results");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "search_timeout");
     }
 
     #[test]

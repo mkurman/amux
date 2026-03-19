@@ -145,6 +145,8 @@ impl TuiModel {
             "firecrawl_api_key": &self.config.firecrawl_api_key,
             "exa_api_key": &self.config.exa_api_key,
             "tavily_api_key": &self.config.tavily_api_key,
+            "search_max_results": self.config.search_max_results,
+            "search_timeout_secs": self.config.search_timeout_secs,
             "gateway": {
                 "enabled": self.config.gateway_enabled,
                 "slack_token": &self.config.slack_token,
@@ -155,6 +157,7 @@ impl TuiModel {
         })) {
             self.send_daemon_command(DaemonCommand::SetConfigJson(json));
         }
+        self.save_settings();
     }
 
     /// Load saved settings from ~/.tamux/agent-settings.json on startup.
@@ -215,11 +218,18 @@ impl TuiModel {
         self.config.tool_web_browse = get_bool("enableWebBrowsingTool");
         self.config.tool_vision = get_bool("enableVisionTool");
 
+        // Reasoning effort
+        if let Some(effort) = json.get("reasoningEffort").and_then(|v| v.as_str()) {
+            self.config.reasoning_effort = effort.to_string();
+        }
+
         // Web search provider + keys
         self.config.search_provider = get_str("searchToolProvider");
         self.config.firecrawl_api_key = get_str("firecrawlApiKey");
         self.config.exa_api_key = get_str("exaApiKey");
         self.config.tavily_api_key = get_str("tavilyApiKey");
+        self.config.search_max_results = json.get("searchMaxResults").and_then(|v| v.as_u64()).unwrap_or(8) as u32;
+        self.config.search_timeout_secs = json.get("searchTimeoutSeconds").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
 
         // Gateway config (from settings.json — different file)
         let settings_path = format!("{}/.tamux/settings.json", home);
@@ -243,6 +253,80 @@ impl TuiModel {
             "Loaded settings: {} / {}",
             self.config.provider, self.config.model
         );
+    }
+
+    /// Persist current settings to ~/.tamux/agent-settings.json (and gateway to settings.json).
+    /// Reads the existing file first to preserve fields we don't manage.
+    fn save_settings(&self) {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+        if home.is_empty() {
+            return;
+        }
+
+        // Ensure ~/.tamux/ directory exists
+        let dir = format!("{}/.tamux", home);
+        let _ = std::fs::create_dir_all(&dir);
+
+        let path = format!("{}/.tamux/agent-settings.json", home);
+
+        // Read existing file to preserve fields we don't manage
+        let mut json: serde_json::Value = if let Ok(data) = std::fs::read_to_string(&path) {
+            serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        // Update our managed top-level fields
+        json["activeProvider"] = serde_json::Value::String(self.config.provider.clone());
+        json["reasoningEffort"] = serde_json::Value::String(self.config.reasoning_effort.clone());
+        json["enableBashTool"] = serde_json::Value::Bool(self.config.tool_bash);
+        json["enableWebSearchTool"] = serde_json::Value::Bool(self.config.tool_web_search);
+        json["enableWebBrowsingTool"] = serde_json::Value::Bool(self.config.tool_web_browse);
+        json["enableVisionTool"] = serde_json::Value::Bool(self.config.tool_vision);
+        json["searchToolProvider"] = serde_json::Value::String(self.config.search_provider.clone());
+        json["firecrawlApiKey"] = serde_json::Value::String(self.config.firecrawl_api_key.clone());
+        json["exaApiKey"] = serde_json::Value::String(self.config.exa_api_key.clone());
+        json["tavilyApiKey"] = serde_json::Value::String(self.config.tavily_api_key.clone());
+        json["searchMaxResults"] = serde_json::Value::Number(self.config.search_max_results.into());
+        json["searchTimeoutSeconds"] = serde_json::Value::Number(self.config.search_timeout_secs.into());
+
+        // Update per-provider config block for the active provider
+        let provider_config = serde_json::json!({
+            "baseUrl": &self.config.base_url,
+            "model": &self.config.model,
+            "apiKey": &self.config.api_key,
+        });
+        json[&self.config.provider] = provider_config;
+
+        if let Ok(data) = serde_json::to_string_pretty(&json) {
+            if let Err(e) = std::fs::write(&path, data) {
+                tracing::warn!("Failed to write agent-settings.json: {}", e);
+            }
+        }
+
+        // Save gateway config to settings.json
+        let settings_path = format!("{}/.tamux/settings.json", home);
+        let mut settings_json: serde_json::Value =
+            if let Ok(data) = std::fs::read_to_string(&settings_path) {
+                serde_json::from_str(&data).unwrap_or_else(|_| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+        settings_json["gatewayEnabled"] = serde_json::Value::Bool(self.config.gateway_enabled);
+        settings_json["slackToken"] = serde_json::Value::String(self.config.slack_token.clone());
+        settings_json["telegramToken"] =
+            serde_json::Value::String(self.config.telegram_token.clone());
+        settings_json["discordToken"] =
+            serde_json::Value::String(self.config.discord_token.clone());
+        settings_json["gatewayCommandPrefix"] =
+            serde_json::Value::String(self.config.gateway_prefix.clone());
+        if let Ok(data) = serde_json::to_string_pretty(&settings_json) {
+            if let Err(e) = std::fs::write(&settings_path, data) {
+                tracing::warn!("Failed to write settings.json: {}", e);
+            }
+        }
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
@@ -870,6 +954,19 @@ impl TuiModel {
                             "telegram_token" => self.config.telegram_token = value,
                             "discord_token" => self.config.discord_token = value,
                             "gateway_prefix" => self.config.gateway_prefix = value,
+                            "firecrawl_api_key" => self.config.firecrawl_api_key = value,
+                            "exa_api_key" => self.config.exa_api_key = value,
+                            "tavily_api_key" => self.config.tavily_api_key = value,
+                            "search_max_results" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.search_max_results = n.clamp(1, 20);
+                                }
+                            }
+                            "search_timeout" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.search_timeout_secs = n.clamp(3, 120);
+                                }
+                            }
                             "agent_name" => {
                                 if let Some(ref mut raw) = self.config.agent_config_raw {
                                     raw["agent_name"] =
@@ -979,6 +1076,38 @@ impl TuiModel {
                             let current = self.config.gateway_prefix.clone();
                             self.settings.start_editing("gateway_prefix", &current);
                         }
+                        // Web Search tab
+                        "search_provider" => {
+                            // Cycle: none -> firecrawl -> exa -> tavily -> none
+                            let next = match self.config.search_provider.as_str() {
+                                "none" | "" => "firecrawl",
+                                "firecrawl"  => "exa",
+                                "exa"        => "tavily",
+                                _            => "none",
+                            };
+                            self.config.search_provider = next.to_string();
+                            self.sync_config_to_daemon();
+                        }
+                        "firecrawl_api_key" => {
+                            let current = self.config.firecrawl_api_key.clone();
+                            self.settings.start_editing("firecrawl_api_key", &current);
+                        }
+                        "exa_api_key" => {
+                            let current = self.config.exa_api_key.clone();
+                            self.settings.start_editing("exa_api_key", &current);
+                        }
+                        "tavily_api_key" => {
+                            let current = self.config.tavily_api_key.clone();
+                            self.settings.start_editing("tavily_api_key", &current);
+                        }
+                        "search_max_results" => {
+                            let current = self.config.search_max_results.to_string();
+                            self.settings.start_editing("search_max_results", &current);
+                        }
+                        "search_timeout" => {
+                            let current = self.config.search_timeout_secs.to_string();
+                            self.settings.start_editing("search_timeout", &current);
+                        }
                         // Agent tab inline text edits
                         "agent_name" => {
                             let current = if let Some(raw) = self.config.agent_config_raw.as_ref() {
@@ -1011,6 +1140,10 @@ impl TuiModel {
                     match field.as_str() {
                         "gateway_enabled" => {
                             self.config.gateway_enabled = !self.config.gateway_enabled;
+                            self.sync_config_to_daemon();
+                        }
+                        "web_search_enabled" => {
+                            self.config.tool_web_search = !self.config.tool_web_search;
                             self.sync_config_to_daemon();
                         }
                         f if f.starts_with("tool_") => {
@@ -1207,6 +1340,7 @@ impl TuiModel {
                         })) {
                             self.send_daemon_command(DaemonCommand::SetConfigJson(json));
                         }
+                        self.save_settings();
                     }
                 }
                 self.modal.reduce(modal::ModalAction::Pop);
@@ -1229,6 +1363,7 @@ impl TuiModel {
                     } else {
                         format!("Effort: {}", effort)
                     };
+                    self.save_settings();
                 }
                 self.modal.reduce(modal::ModalAction::Pop);
             }
