@@ -655,6 +655,10 @@ impl TuiModel {
                 FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(-1)),
                 _ => {}
             },
+            // Toggle reasoning on last assistant message
+            KeyCode::Char('r') if self.focus == FocusArea::Chat => {
+                self.chat.toggle_last_reasoning();
+            }
             KeyCode::Char('[') if self.focus != FocusArea::Input => self
                 .sidebar
                 .reduce(sidebar::SidebarAction::SwitchTab(sidebar::SidebarTab::Tasks)),

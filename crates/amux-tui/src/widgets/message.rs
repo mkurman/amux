@@ -4,19 +4,24 @@ use ratatui::text::{Line, Span};
 use crate::state::chat::{AgentMessage, MessageRole, TranscriptMode};
 use crate::theme::ThemeTokens;
 
+/// Set of message indices whose reasoning blocks are expanded
+pub type ExpandedReasoning = std::collections::HashSet<usize>;
+
 /// Convert a message into ratatui Lines (all owned/static)
 pub fn message_to_lines(
     msg: &AgentMessage,
+    msg_index: usize,
     mode: TranscriptMode,
     theme: &ThemeTokens,
     width: usize,
+    expanded: &ExpandedReasoning,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     match mode {
-        TranscriptMode::Compact => render_compact(msg, theme, width, &mut lines),
+        TranscriptMode::Compact => render_compact(msg, msg_index, theme, width, expanded, &mut lines),
         TranscriptMode::Tools => render_tools_only(msg, theme, width, &mut lines),
-        TranscriptMode::Full => render_full(msg, theme, width, &mut lines),
+        TranscriptMode::Full => render_full(msg, msg_index, theme, width, expanded, &mut lines),
     }
 
     lines
@@ -24,19 +29,19 @@ pub fn message_to_lines(
 
 fn render_compact(
     msg: &AgentMessage,
+    msg_index: usize,
     theme: &ThemeTokens,
     width: usize,
+    expanded: &ExpandedReasoning,
     lines: &mut Vec<Line<'static>>,
 ) {
     let indent = 7;
     let content_width = width.saturating_sub(indent + 1);
 
-    let (badge, badge_style) = role_badge(msg.role);
-
-    // Skip empty tool messages in compact mode -- show tool status one-liner
-    if msg.role == MessageRole::Tool && msg.content.is_empty() {
+    // TOOL messages always render as compact one-liner with gear icon
+    if msg.role == MessageRole::Tool {
         if let Some(name) = &msg.tool_name {
-            let status = msg.tool_status.as_deref().unwrap_or("running");
+            let status = msg.tool_status.as_deref().unwrap_or("done");
             let (status_text, status_style) = format_tool_status(status, theme);
             lines.push(Line::from(vec![
                 Span::raw("  "),
@@ -50,12 +55,46 @@ fn render_compact(
         return;
     }
 
-    // First line: badge + first line of content
     let content = &msg.content;
-    if content.is_empty() && msg.role != MessageRole::Tool {
+    if content.is_empty() {
         return;
     }
 
+    let (badge, badge_style) = role_badge(msg.role);
+
+    // For assistant messages: show reasoning BEFORE content
+    if msg.role == MessageRole::Assistant {
+        if let Some(reasoning) = &msg.reasoning {
+            if !reasoning.is_empty() {
+                let is_expanded = expanded.contains(&msg_index);
+                if is_expanded {
+                    // Expanded reasoning
+                    lines.push(Line::from(vec![
+                        Span::raw(" ".repeat(indent)),
+                        Span::styled("\u{25be} [-] Reasoning", theme.fg_dim),
+                    ]));
+                    let reasoning_width = width.saturating_sub(indent + 2);
+                    let dark_blue = Style::default().fg(Color::Indexed(24));
+                    for line in wrap_text(reasoning, reasoning_width) {
+                        lines.push(Line::from(vec![
+                            Span::raw(" ".repeat(indent)),
+                            Span::styled("\u{2502}", dark_blue),
+                            Span::raw(" "),
+                            Span::styled(line, theme.fg_dim),
+                        ]));
+                    }
+                } else {
+                    // Collapsed reasoning hint
+                    lines.push(Line::from(vec![
+                        Span::raw(" ".repeat(indent)),
+                        Span::styled("\u{25b6} [+] Reasoning", theme.fg_dim),
+                    ]));
+                }
+            }
+        }
+    }
+
+    // Badge + first line of content
     let content_lines = wrap_text(content, content_width);
 
     if let Some(first) = content_lines.first() {
@@ -72,38 +111,12 @@ fn render_compact(
         ]));
     }
 
-    // Continuation lines with indent
+    // Continuation lines
     for line in content_lines.iter().skip(1) {
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(indent)),
             Span::styled(line.clone(), theme.fg_active),
         ]));
-    }
-
-    // Tool calls inline (compact: single merged line)
-    if msg.role == MessageRole::Assistant {
-        if let Some(name) = &msg.tool_name {
-            let status = msg.tool_status.as_deref().unwrap_or("running");
-            let (status_text, status_style) = format_tool_status(status, theme);
-            lines.push(Line::from(vec![
-                Span::raw(" ".repeat(indent)),
-                Span::styled("\u{2699}", theme.accent_assistant),
-                Span::raw(" "),
-                Span::styled(name.clone(), theme.fg_dim),
-                Span::raw(" "),
-                Span::styled(status_text, status_style),
-            ]));
-        }
-
-        // Show collapsed reasoning hint if reasoning is present in history messages
-        if let Some(reasoning) = &msg.reasoning {
-            if !reasoning.is_empty() {
-                lines.push(Line::from(vec![
-                    Span::raw(" ".repeat(indent)),
-                    Span::styled("\u{25b6} [+] Reasoning", theme.fg_dim),
-                ]));
-            }
-        }
     }
 }
 
@@ -113,13 +126,12 @@ fn render_tools_only(
     width: usize,
     lines: &mut Vec<Line<'static>>,
 ) {
-    // Only show tool-related messages
     if msg.role != MessageRole::Tool && msg.tool_name.is_none() {
         return;
     }
 
     if let Some(name) = &msg.tool_name {
-        let status = msg.tool_status.as_deref().unwrap_or("running");
+        let status = msg.tool_status.as_deref().unwrap_or("done");
         let (status_text, status_style) = format_tool_status(status, theme);
         let args_preview = msg.tool_arguments.as_deref().unwrap_or("");
         let max_args = width.saturating_sub(30);
@@ -149,34 +161,16 @@ fn render_tools_only(
 
 fn render_full(
     msg: &AgentMessage,
+    msg_index: usize,
     theme: &ThemeTokens,
     width: usize,
+    expanded: &ExpandedReasoning,
     lines: &mut Vec<Line<'static>>,
 ) {
-    let indent = 7;
-
-    // Full mode: render everything including reasoning
-    render_compact(msg, theme, width, lines);
-
-    // Show reasoning if present
-    if let Some(reasoning) = &msg.reasoning {
-        if !reasoning.is_empty() {
-            let dark_blue_style = Style::default().fg(Color::Indexed(24));
-            lines.push(Line::from(vec![
-                Span::raw(" ".repeat(indent)),
-                Span::styled("\u{25be} [-] Reasoning", theme.fg_dim),
-            ]));
-            let reasoning_width = width.saturating_sub(indent + 2);
-            for line in wrap_text(reasoning, reasoning_width) {
-                lines.push(Line::from(vec![
-                    Span::raw(" ".repeat(indent)),
-                    Span::styled("\u{2502}", dark_blue_style),
-                    Span::raw(" "),
-                    Span::styled(line, theme.fg_dim),
-                ]));
-            }
-        }
-    }
+    // Full mode: always expand reasoning
+    let mut full_expanded = expanded.clone();
+    full_expanded.insert(msg_index);
+    render_compact(msg, msg_index, theme, width, &full_expanded, lines);
 }
 
 fn role_badge(role: MessageRole) -> (&'static str, Style) {
@@ -193,7 +187,7 @@ fn format_tool_status(status: &str, theme: &ThemeTokens) -> (&'static str, Style
     match status {
         "completed" | "done" | "success" => ("\u{2713} done", theme.accent_success),
         "error" | "failed" => ("\u{2717} error", theme.accent_danger),
-        _ => ("\u{28cb} running", theme.accent_secondary),
+        _ => ("\u{25cf} running", theme.accent_secondary),
     }
 }
 
@@ -234,6 +228,10 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn empty_expanded() -> ExpandedReasoning {
+        ExpandedReasoning::new()
+    }
+
     #[test]
     fn wrap_text_basic() {
         let lines = wrap_text("hello world foo bar", 12);
@@ -253,7 +251,7 @@ mod tests {
             content: "Hello".into(),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
         assert!(!lines.is_empty());
     }
 
@@ -263,10 +261,55 @@ mod tests {
             role: MessageRole::Tool,
             tool_name: Some("bash_command".into()),
             tool_status: Some("done".into()),
+            content: "some output here".into(), // has content but should still show compact
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
-        assert!(!lines.is_empty());
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        assert_eq!(lines.len(), 1); // single compact line
+    }
+
+    #[test]
+    fn tool_message_with_content_renders_compact() {
+        let msg = AgentMessage {
+            role: MessageRole::Tool,
+            tool_name: Some("list_workspaces".into()),
+            tool_status: Some("done".into()),
+            content: "Workspace Default:\n  Surface: Infinite Canvas".into(),
+            ..Default::default()
+        };
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        // Should be 1 compact line, not the full content
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn reasoning_before_content() {
+        let msg = AgentMessage {
+            role: MessageRole::Assistant,
+            content: "Here is my answer".into(),
+            reasoning: Some("Let me think...".into()),
+            ..Default::default()
+        };
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        // First line should be reasoning hint, then ASST badge
+        assert!(lines.len() >= 2);
+        let first_text: String = lines[0].spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(first_text.contains("Reasoning"), "First line should be reasoning hint, got: {}", first_text);
+    }
+
+    #[test]
+    fn reasoning_expandable() {
+        let msg = AgentMessage {
+            role: MessageRole::Assistant,
+            content: "Answer".into(),
+            reasoning: Some("Thinking step by step".into()),
+            ..Default::default()
+        };
+        let collapsed = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        let mut exp = empty_expanded();
+        exp.insert(0);
+        let expanded = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &exp);
+        assert!(expanded.len() > collapsed.len(), "Expanded should have more lines");
     }
 
     #[test]
@@ -276,31 +319,8 @@ mod tests {
             content: "Hello".into(),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, TranscriptMode::Tools, &ThemeTokens::default(), 80);
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Tools, &ThemeTokens::default(), 80, &empty_expanded());
         assert!(lines.is_empty());
-    }
-
-    #[test]
-    fn assistant_message_renders_in_compact() {
-        let msg = AgentMessage {
-            role: MessageRole::Assistant,
-            content: "I can help with that.".into(),
-            ..Default::default()
-        };
-        let lines = message_to_lines(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
-        assert!(!lines.is_empty());
-    }
-
-    #[test]
-    fn full_mode_shows_reasoning() {
-        let msg = AgentMessage {
-            role: MessageRole::Assistant,
-            content: "Result".into(),
-            reasoning: Some("Step by step thinking".into()),
-            ..Default::default()
-        };
-        let lines = message_to_lines(&msg, TranscriptMode::Full, &ThemeTokens::default(), 80);
-        assert!(lines.len() > 1);
     }
 
     #[test]

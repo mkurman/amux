@@ -111,6 +111,7 @@ pub struct ChatState {
     scroll_offset: usize,
     scroll_locked: bool,
     transcript_mode: TranscriptMode,
+    expanded_reasoning: std::collections::HashSet<usize>,
 }
 
 impl ChatState {
@@ -122,6 +123,7 @@ impl ChatState {
             streaming_reasoning: String::new(),
             active_tool_calls: Vec::new(),
             scroll_offset: 0,
+            expanded_reasoning: std::collections::HashSet::new(),
             scroll_locked: false,
             transcript_mode: TranscriptMode::Compact,
         }
@@ -171,6 +173,34 @@ impl ChatState {
 
     pub fn is_streaming(&self) -> bool {
         !self.streaming_content.is_empty() || !self.streaming_reasoning.is_empty()
+    }
+
+    pub fn expanded_reasoning(&self) -> &std::collections::HashSet<usize> {
+        &self.expanded_reasoning
+    }
+
+    pub fn toggle_reasoning(&mut self, msg_index: usize) {
+        if self.expanded_reasoning.contains(&msg_index) {
+            self.expanded_reasoning.remove(&msg_index);
+        } else {
+            self.expanded_reasoning.insert(msg_index);
+        }
+    }
+
+    /// Toggle reasoning on the last assistant message that has reasoning
+    pub fn toggle_last_reasoning(&mut self) {
+        if let Some(thread) = self.active_thread() {
+            for (idx, msg) in thread.messages.iter().enumerate().rev() {
+                if msg.role == MessageRole::Assistant && msg.reasoning.is_some() {
+                    if self.expanded_reasoning.contains(&idx) {
+                        self.expanded_reasoning.remove(&idx);
+                    } else {
+                        self.expanded_reasoning.insert(idx);
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     pub fn reduce(&mut self, action: ChatAction) {

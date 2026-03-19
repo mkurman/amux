@@ -45,11 +45,11 @@ pub fn render(
 
     let mut all_lines: Vec<Line> = Vec::new();
 
+    let expanded = chat.expanded_reasoning();
     if let Some(thread) = chat.active_thread() {
-        for msg in &thread.messages {
-            let msg_lines = super::message::message_to_lines(msg, mode, theme, inner_width);
+        for (idx, msg) in thread.messages.iter().enumerate() {
+            let msg_lines = super::message::message_to_lines(msg, idx, mode, theme, inner_width, expanded);
             all_lines.extend(msg_lines);
-            // Add spacing between messages
             if !all_lines.is_empty() {
                 all_lines.push(Line::raw(""));
             }
