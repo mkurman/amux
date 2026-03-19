@@ -654,6 +654,21 @@ impl StringModel for TuiModel {
         // Footer
         lines.extend(footer_lines);
 
+        // Modal overlay — replaces the entire screen when active
+        if let Some(modal_kind) = self.modal.top() {
+            match modal_kind {
+                crate::state::modal::ModalKind::CommandPalette => {
+                    let overlay = crate::widgets::command_palette::command_palette_widget(
+                        &self.modal, &self.theme, w, self.height as usize,
+                    );
+                    // Replace lines with overlay
+                    lines = overlay;
+                }
+                // Other modals will be added in later tasks
+                _ => {}
+            }
+        }
+
         lines.join("\n")
     }
 }
