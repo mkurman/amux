@@ -94,6 +94,19 @@ impl TuiModel {
         let _ = self.daemon_cmd_tx.send(command);
     }
 
+    /// Push the current config state to the daemon via SetConfigJson.
+    fn sync_config_to_daemon(&self) {
+        if let Ok(json) = serde_json::to_string(&serde_json::json!({
+            "provider": &self.config.provider,
+            "base_url": &self.config.base_url,
+            "api_key": &self.config.api_key,
+            "model": &self.config.model,
+            "reasoning_effort": &self.config.reasoning_effort,
+        })) {
+            self.send_daemon_command(DaemonCommand::SetConfigJson(json));
+        }
+    }
+
     // ── Rendering ─────────────────────────────────────────────────────────────
 
     pub fn render(&self, frame: &mut Frame) {
@@ -629,8 +642,45 @@ impl TuiModel {
         _modifiers: KeyModifiers,
         kind: modal::ModalKind,
     ) -> bool {
-        // Settings modal: Tab cycles tabs, j/k navigate fields, Enter edits
+        // Settings modal: inline editing + field navigation
         if kind == modal::ModalKind::Settings {
+            // When actively editing a text field, route all keys to the edit buffer
+            if self.settings.is_editing() {
+                match code {
+                    KeyCode::Enter => {
+                        // Apply the edit buffer value to config
+                        let field = self.settings.editing_field().unwrap_or("").to_string();
+                        let value = self.settings.edit_buffer().to_string();
+                        match field.as_str() {
+                            "base_url" => self.config.base_url = value,
+                            "api_key" => self.config.api_key = value,
+                            "agent_name" => {
+                                // Update agent name in raw config
+                                if let Some(ref mut raw) = self.config.agent_config_raw {
+                                    raw["agent_name"] =
+                                        serde_json::Value::String(value);
+                                }
+                            }
+                            _ => {}
+                        }
+                        self.settings.reduce(SettingsAction::ConfirmEdit);
+                        self.sync_config_to_daemon();
+                    }
+                    KeyCode::Esc => {
+                        self.settings.reduce(SettingsAction::CancelEdit);
+                    }
+                    KeyCode::Backspace => {
+                        self.settings.reduce(SettingsAction::Backspace);
+                    }
+                    KeyCode::Char(c) => {
+                        self.settings.reduce(SettingsAction::InsertChar(c));
+                    }
+                    _ => {}
+                }
+                return false;
+            }
+
+            // Not editing — normal navigation
             match code {
                 KeyCode::Tab => {
                     let all = SettingsTab::all();
@@ -665,7 +715,40 @@ impl TuiModel {
                     return false;
                 }
                 KeyCode::Enter => {
-                    self.settings.reduce(SettingsAction::EditField);
+                    let field = self.settings.current_field_name().to_string();
+                    match field.as_str() {
+                        "provider" => {
+                            // Open provider picker overlay
+                            self.execute_command("provider");
+                        }
+                        "model" => {
+                            // Open model picker overlay
+                            self.execute_command("model");
+                        }
+                        "base_url" => {
+                            let current = self.config.base_url.clone();
+                            self.settings.start_editing("base_url", &current);
+                        }
+                        "api_key" => {
+                            let current = self.config.api_key.clone();
+                            self.settings.start_editing("api_key", &current);
+                        }
+                        "reasoning_effort" => {
+                            self.execute_command("effort");
+                        }
+                        "agent_name" => {
+                            let current = if let Some(raw) = self.config.agent_config_raw.as_ref() {
+                                raw.get("agent_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Sisyphus")
+                                    .to_string()
+                            } else {
+                                "Sisyphus".to_string()
+                            };
+                            self.settings.start_editing("agent_name", &current);
+                        }
+                        _ => {}
+                    }
                     return false;
                 }
                 KeyCode::Char(' ') => {

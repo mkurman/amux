@@ -67,25 +67,39 @@ pub fn render(
     let paragraph = Paragraph::new(content_lines);
     frame.render_widget(paragraph, chunks[2]);
 
-    // Hints
-    let hints = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("Tab", theme.fg_active),
-        Span::styled(" switch tab  ", theme.fg_dim),
-        Span::styled("Esc", theme.fg_active),
-        Span::styled(" close", theme.fg_dim),
-    ]);
+    // Hints — context-sensitive
+    let hints = if settings.is_editing() {
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("Enter", theme.fg_active),
+            Span::styled(" confirm  ", theme.fg_dim),
+            Span::styled("Esc", theme.fg_active),
+            Span::styled(" cancel", theme.fg_dim),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("j/k", theme.fg_active),
+            Span::styled(" navigate  ", theme.fg_dim),
+            Span::styled("Enter", theme.fg_active),
+            Span::styled(" edit/select  ", theme.fg_dim),
+            Span::styled("Tab", theme.fg_active),
+            Span::styled(" switch tab  ", theme.fg_dim),
+            Span::styled("Esc", theme.fg_active),
+            Span::styled(" close", theme.fg_dim),
+        ])
+    };
     frame.render_widget(Paragraph::new(hints), chunks[3]);
 }
 
 fn render_tab_content<'a>(
-    settings: &SettingsState,
+    settings: &'a SettingsState,
     config: &'a ConfigState,
     theme: &ThemeTokens,
 ) -> Vec<Line<'a>> {
     match settings.active_tab() {
-        SettingsTab::Provider => render_provider_tab(config, theme),
-        SettingsTab::Model => render_model_tab(config, theme),
+        SettingsTab::Provider => render_provider_tab(settings, config, theme),
+        SettingsTab::Model => render_model_tab(settings, config, theme),
         SettingsTab::Tools => render_tools_tab(theme),
         SettingsTab::Reasoning => render_reasoning_tab(config, theme),
         SettingsTab::Gateway => render_gateway_tab(theme),
@@ -93,7 +107,11 @@ fn render_tab_content<'a>(
     }
 }
 
-fn render_provider_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Line<'a>> {
+fn render_provider_tab<'a>(
+    settings: &'a SettingsState,
+    config: &'a ConfigState,
+    theme: &ThemeTokens,
+) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     lines.push(Line::raw(""));
@@ -104,45 +122,85 @@ fn render_provider_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<
     )));
     lines.push(Line::raw(""));
 
-    let provider = if config.provider().is_empty() {
-        "(not set)"
+    let provider_val = if config.provider().is_empty() {
+        "(not set)".to_string()
     } else {
-        config.provider()
+        config.provider().to_string()
     };
-    let base_url = if config.base_url().is_empty() {
-        "(not set)"
+    let base_url_val = if config.base_url().is_empty() {
+        "(not set)".to_string()
     } else {
-        config.base_url()
+        config.base_url().to_string()
     };
-    let model = if config.model().is_empty() {
-        "(not set)"
+    let model_val = if config.model().is_empty() {
+        "(not set)".to_string()
     } else {
-        config.model()
+        config.model().to_string()
     };
-    let api_key_display = mask_api_key(config.api_key());
+    let api_key_val = mask_api_key(config.api_key());
 
-    lines.push(Line::from(vec![
-        Span::styled("  Active Provider: ", theme.fg_dim),
-        Span::styled(provider, theme.fg_active),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  Base URL:        ", theme.fg_dim),
-        Span::styled(base_url, theme.fg_active),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  API Key:         ", theme.fg_dim),
-        Span::styled(api_key_display, theme.fg_active),
-        Span::styled(" [show]", theme.fg_dim),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("  Model:           ", theme.fg_dim),
-        Span::styled(model, theme.fg_active),
-    ]));
+    // Field definitions: (index, label, value, field_name, hint)
+    let fields: [(usize, &str, String, &str, &str); 4] = [
+        (0, "Provider", provider_val, "provider", " [Enter: pick]"),
+        (1, "Base URL", base_url_val, "base_url", " [Enter: edit]"),
+        (2, "API Key",  api_key_val,  "api_key",  " [Enter: edit]"),
+        (3, "Model",    model_val,    "model",    " [Enter: pick]"),
+    ];
+
+    for (idx, label, value, field_name, hint) in &fields {
+        let is_selected = settings.field_cursor() == *idx;
+        let is_editing =
+            settings.is_editing() && settings.editing_field() == Some(*field_name);
+
+        let marker = if is_selected { ">" } else { " " };
+
+        let display_value: String = if is_editing {
+            // Show edit buffer with cursor block
+            if *field_name == "api_key" {
+                // Show raw characters while editing API key
+                format!("{}\u{2588}", settings.edit_buffer())
+            } else {
+                format!("{}\u{2588}", settings.edit_buffer())
+            }
+        } else {
+            value.clone()
+        };
+
+        let marker_style = if is_selected {
+            theme.accent_primary
+        } else {
+            theme.fg_dim
+        };
+        let value_style = if is_editing {
+            theme.fg_active
+        } else if is_selected {
+            theme.accent_primary
+        } else {
+            theme.fg_active
+        };
+
+        let mut spans = vec![
+            Span::styled(format!(" {} ", marker), marker_style),
+            Span::styled(format!("{:<15} ", label), theme.fg_dim),
+            Span::styled(display_value, value_style),
+        ];
+
+        // Show hint on selected but not editing
+        if is_selected && !is_editing {
+            spans.push(Span::styled(*hint, theme.fg_dim));
+        }
+
+        lines.push(Line::from(spans));
+    }
 
     lines
 }
 
-fn render_model_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Line<'a>> {
+fn render_model_tab<'a>(
+    settings: &'a SettingsState,
+    config: &'a ConfigState,
+    theme: &ThemeTokens,
+) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     lines.push(Line::raw(""));
@@ -158,30 +216,45 @@ fn render_model_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Lin
     } else {
         config.model()
     };
+
+    let is_selected = settings.field_cursor() == 0;
+    let marker = if is_selected { ">" } else { " " };
+    let marker_style = if is_selected {
+        theme.accent_primary
+    } else {
+        theme.fg_dim
+    };
+
     lines.push(Line::from(vec![
-        Span::styled("  Current:   ", theme.fg_dim),
+        Span::styled(format!(" {} ", marker), marker_style),
+        Span::styled("Current:  ", theme.fg_dim),
         Span::styled(current, theme.fg_active),
+        if is_selected {
+            Span::styled(" [Enter: pick model]", theme.fg_dim)
+        } else {
+            Span::raw("")
+        },
     ]));
 
     let models = config.fetched_models();
     if models.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled("  Available:  ", theme.fg_dim),
+            Span::styled("   Available:  ", theme.fg_dim),
             Span::styled("(press Enter to fetch)", theme.fg_dim),
         ]));
     } else {
-        lines.push(Line::from(Span::styled("  Available:", theme.fg_dim)));
+        lines.push(Line::from(Span::styled("   Available:", theme.fg_dim)));
         for m in models {
             let display_name = m.name.as_deref().unwrap_or(&m.id);
             let is_active = m.id == config.model() || display_name == config.model();
             if is_active {
                 lines.push(Line::from(vec![
-                    Span::raw("    "),
+                    Span::raw("     "),
                     Span::styled(format!("> {}", display_name), theme.accent_secondary),
                 ]));
             } else {
                 lines.push(Line::from(vec![
-                    Span::raw("    "),
+                    Span::raw("     "),
                     Span::styled(format!("  {}", display_name), theme.fg_dim),
                 ]));
             }
