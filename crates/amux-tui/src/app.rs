@@ -1,4 +1,4 @@
-//! TuiModel compositor — delegates to decomposed state modules.
+//! TuiModel compositor -- delegates to decomposed state modules.
 //!
 //! This replaces the old monolithic 3,500-line app.rs with a clean
 //! compositor that owns the 8 state sub-modules and bridges between
@@ -6,28 +6,15 @@
 
 use std::sync::mpsc::Receiver;
 
-use ftui_core::event::{Event, KeyCode, KeyEventKind, Modifiers};
-use ftui_runtime::program::Cmd;
-use ftui_runtime::string_model::StringModel;
+use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind, MouseButton};
+use ratatui::prelude::*;
+use ratatui::widgets::Clear;
 use tokio::sync::mpsc::UnboundedSender;
-use web_time::Duration;
 
 use crate::client::ClientEvent;
 use crate::state::*;
 use crate::theme::ThemeTokens;
-
-// ── Message ──────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub enum Msg {
-    Event(Event),
-}
-
-impl From<Event> for Msg {
-    fn from(value: Event) -> Self {
-        Self::Event(value)
-    }
-}
+use crate::widgets;
 
 // ── TuiModel ─────────────────────────────────────────────────────────────────
 
@@ -44,7 +31,6 @@ pub struct TuiModel {
 
     // UI chrome
     focus: FocusArea,
-    #[allow(dead_code)]
     theme: ThemeTokens,
     width: u16,
     height: u16,
@@ -57,6 +43,7 @@ pub struct TuiModel {
     connected: bool,
     status_line: String,
     default_session_id: Option<String>,
+    #[allow(dead_code)]
     tick_counter: u64,
 
     // Vim motion state
@@ -65,7 +52,7 @@ pub struct TuiModel {
     // Responsive layout override: when Some, overrides breakpoint-based sidebar visibility
     show_sidebar_override: Option<bool>,
 
-    // Set by /quit command; checked after modal enter to issue Cmd::quit()
+    // Set by /quit command; checked after modal enter to issue quit
     pending_quit: bool,
 }
 
@@ -107,9 +94,161 @@ impl TuiModel {
         let _ = self.daemon_cmd_tx.send(command);
     }
 
+    // ── Rendering ─────────────────────────────────────────────────────────────
+
+    pub fn render(&self, frame: &mut Frame) {
+        let area = frame.area();
+        let w = area.width;
+
+        // Layout: header (3) + body (flex) + footer (4)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),  // header
+                Constraint::Min(1),    // body
+                Constraint::Length(4), // footer
+            ])
+            .split(area);
+
+        // Render header
+        widgets::header::render(frame, chunks[0], &self.config, &self.chat, &self.theme);
+
+        // Render body (two-pane or single)
+        let default_show_sidebar = w >= 80;
+        let show_sidebar = self.show_sidebar_override.unwrap_or(default_show_sidebar);
+
+        if show_sidebar {
+            let sidebar_pct = if w >= 120 { 33 } else { 28 };
+            let body_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(100 - sidebar_pct),
+                    Constraint::Percentage(sidebar_pct),
+                ])
+                .split(chunks[1]);
+            widgets::chat::render(
+                frame,
+                body_chunks[0],
+                &self.chat,
+                &self.theme,
+                self.focus == FocusArea::Chat,
+            );
+            widgets::sidebar::render(
+                frame,
+                body_chunks[1],
+                &self.sidebar,
+                &self.tasks,
+                &self.theme,
+                self.focus == FocusArea::Sidebar,
+            );
+        } else {
+            widgets::chat::render(
+                frame,
+                chunks[1],
+                &self.chat,
+                &self.theme,
+                self.focus == FocusArea::Chat,
+            );
+        }
+
+        // Render footer
+        widgets::footer::render(
+            frame,
+            chunks[2],
+            &self.input,
+            &self.theme,
+            &self.status_line,
+            self.focus == FocusArea::Input,
+        );
+
+        // Modal overlay
+        if let Some(modal_kind) = self.modal.top() {
+            let overlay_area = match modal_kind {
+                modal::ModalKind::Settings => centered_rect(75, 80, area),
+                modal::ModalKind::ApprovalOverlay => centered_rect(60, 40, area),
+                modal::ModalKind::CommandPalette => centered_rect(50, 40, area),
+                modal::ModalKind::ThreadPicker => centered_rect(60, 50, area),
+                modal::ModalKind::ProviderPicker => centered_rect(35, 50, area),
+                modal::ModalKind::ModelPicker => centered_rect(45, 50, area),
+                modal::ModalKind::EffortPicker => centered_rect(35, 30, area),
+                modal::ModalKind::ToolsPicker | modal::ModalKind::ViewPicker => {
+                    centered_rect(40, 35, area)
+                }
+            };
+            frame.render_widget(Clear, overlay_area);
+
+            match modal_kind {
+                modal::ModalKind::CommandPalette => {
+                    widgets::command_palette::render(
+                        frame,
+                        overlay_area,
+                        &self.modal,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::ThreadPicker => {
+                    widgets::thread_picker::render(
+                        frame,
+                        overlay_area,
+                        &self.chat,
+                        &self.modal,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::ApprovalOverlay => {
+                    widgets::approval::render(
+                        frame,
+                        overlay_area,
+                        &self.approval,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::Settings => {
+                    widgets::settings::render(
+                        frame,
+                        overlay_area,
+                        &self.settings,
+                        &self.config,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::ProviderPicker => {
+                    widgets::provider_picker::render(
+                        frame,
+                        overlay_area,
+                        &self.modal,
+                        &self.config,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::ModelPicker => {
+                    widgets::model_picker::render(
+                        frame,
+                        overlay_area,
+                        &self.modal,
+                        &self.config,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::EffortPicker => {
+                    render_effort_picker(
+                        frame,
+                        overlay_area,
+                        &self.modal,
+                        &self.config,
+                        &self.theme,
+                    );
+                }
+                modal::ModalKind::ToolsPicker | modal::ModalKind::ViewPicker => {
+                    // Not yet implemented -- just render the area as empty
+                }
+            }
+        }
+    }
+
     // ── Daemon event pump ────────────────────────────────────────────────────
 
-    fn pump_daemon_events(&mut self) {
+    pub fn pump_daemon_events(&mut self) {
         while let Ok(event) = self.daemon_events_rx.try_recv() {
             self.handle_client_event(event);
         }
@@ -287,7 +426,8 @@ impl TuiModel {
 
     // ── Key handling ─────────────────────────────────────────────────────────
 
-    fn handle_key(&mut self, code: KeyCode, modifiers: Modifiers) -> Cmd<Msg> {
+    /// Returns true if the app should quit
+    pub fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         // Modal takes priority
         if let Some(modal_kind) = self.modal.top() {
             return self.handle_key_modal(code, modifiers, modal_kind);
@@ -299,8 +439,8 @@ impl TuiModel {
         }
     }
 
-    fn handle_key_normal(&mut self, code: KeyCode, modifiers: Modifiers) -> Cmd<Msg> {
-        let ctrl = modifiers.contains(Modifiers::CTRL);
+    fn handle_key_normal(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 
         // Clear pending_g on any key that isn't 'g'
         if code != KeyCode::Char('g') {
@@ -308,7 +448,7 @@ impl TuiModel {
         }
 
         match code {
-            KeyCode::Char('q') if !ctrl => return Cmd::quit(),
+            KeyCode::Char('q') if !ctrl => return true,
             KeyCode::Char('p') if ctrl => {
                 self.modal
                     .reduce(modal::ModalAction::Push(modal::ModalKind::CommandPalette));
@@ -339,17 +479,19 @@ impl TuiModel {
             // Vim motions
             KeyCode::Char('G') if !ctrl => {
                 // Jump to bottom (most recent)
-                self.chat.reduce(chat::ChatAction::ScrollChat(-(self.chat.scroll_offset() as i32)));
+                self.chat
+                    .reduce(chat::ChatAction::ScrollChat(-(self.chat.scroll_offset() as i32)));
             }
             KeyCode::Char('g') if !ctrl => {
                 if self.pending_g {
                     // gg = scroll to top
-                    self.chat.reduce(chat::ChatAction::ScrollChat(i32::MAX / 2));
+                    self.chat
+                        .reduce(chat::ChatAction::ScrollChat(i32::MAX / 2));
                     self.pending_g = false;
                 } else {
                     self.pending_g = true;
                 }
-                return Cmd::none();
+                return false;
             }
             KeyCode::Char('d') if ctrl => {
                 let half_page = (self.height / 2) as i32;
@@ -379,17 +521,17 @@ impl TuiModel {
             KeyCode::Char(']') => self.sidebar.reduce(sidebar::SidebarAction::SwitchTab(
                 sidebar::SidebarTab::Subagents,
             )),
-            KeyCode::Escape => {
+            KeyCode::Esc => {
                 // Already in normal mode, no modal -- do nothing
             }
             _ => {}
         }
 
-        Cmd::none()
+        false
     }
 
-    fn handle_key_insert(&mut self, code: KeyCode, modifiers: Modifiers) -> Cmd<Msg> {
-        let ctrl = modifiers.contains(Modifiers::CTRL);
+    fn handle_key_insert(&mut self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 
         // Global shortcuts even in insert mode
         if ctrl {
@@ -397,19 +539,19 @@ impl TuiModel {
                 KeyCode::Char('p') => {
                     self.modal
                         .reduce(modal::ModalAction::Push(modal::ModalKind::CommandPalette));
-                    return Cmd::none();
+                    return false;
                 }
                 KeyCode::Char('t') => {
                     self.modal
                         .reduce(modal::ModalAction::Push(modal::ModalKind::ThreadPicker));
-                    return Cmd::none();
+                    return false;
                 }
                 _ => {}
             }
         }
 
         match code {
-            KeyCode::Escape => {
+            KeyCode::Esc => {
                 self.input.set_mode(input::InputMode::Normal);
             }
             KeyCode::Enter => {
@@ -418,15 +560,19 @@ impl TuiModel {
                     self.handle_modal_enter(modal::ModalKind::CommandPalette);
                     if self.pending_quit {
                         self.pending_quit = false;
-                        return Cmd::quit();
+                        return true;
                     }
-                    return Cmd::none();
+                    return false;
                 }
                 self.input.reduce(input::InputAction::Submit);
                 if let Some(prompt) = self.input.take_submitted() {
                     // Slash commands: /command args
                     if prompt.starts_with('/') {
-                        let cmd = prompt.trim_start_matches('/').split_whitespace().next().unwrap_or("");
+                        let cmd = prompt
+                            .trim_start_matches('/')
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("");
                         self.execute_command(cmd);
                     } else {
                         self.submit_prompt(prompt);
@@ -466,35 +612,41 @@ impl TuiModel {
             _ => {}
         }
 
-        Cmd::none()
+        false
     }
 
     fn handle_key_modal(
         &mut self,
         code: KeyCode,
-        _modifiers: Modifiers,
+        _modifiers: KeyModifiers,
         kind: modal::ModalKind,
-    ) -> Cmd<Msg> {
+    ) -> bool {
         // Settings modal: Tab cycles tabs, Esc closes
         if kind == modal::ModalKind::Settings {
             match code {
                 KeyCode::Tab => {
                     let all = SettingsTab::all();
                     let current = self.settings.active_tab();
-                    let next_idx = all.iter().position(|&t| t == current)
+                    let next_idx = all
+                        .iter()
+                        .position(|&t| t == current)
                         .map(|i| (i + 1) % all.len())
                         .unwrap_or(0);
-                    self.settings.reduce(SettingsAction::SwitchTab(all[next_idx]));
-                    return Cmd::none();
+                    self.settings
+                        .reduce(SettingsAction::SwitchTab(all[next_idx]));
+                    return false;
                 }
                 KeyCode::BackTab => {
                     let all = SettingsTab::all();
                     let current = self.settings.active_tab();
-                    let prev_idx = all.iter().position(|&t| t == current)
+                    let prev_idx = all
+                        .iter()
+                        .position(|&t| t == current)
                         .map(|i| if i == 0 { all.len() - 1 } else { i - 1 })
                         .unwrap_or(0);
-                    self.settings.reduce(SettingsAction::SwitchTab(all[prev_idx]));
-                    return Cmd::none();
+                    self.settings
+                        .reduce(SettingsAction::SwitchTab(all[prev_idx]));
+                    return false;
                 }
                 _ => {
                     // fall through to generic Esc handling below
@@ -537,7 +689,7 @@ impl TuiModel {
                 }
                 _ => {}
             }
-            return Cmd::none();
+            return false;
         }
 
         // Command palette and thread picker allow typing for search
@@ -547,7 +699,7 @@ impl TuiModel {
         );
 
         match code {
-            KeyCode::Escape => {
+            KeyCode::Esc => {
                 self.modal.reduce(modal::ModalAction::Pop);
                 self.input.reduce(input::InputAction::Clear);
             }
@@ -562,7 +714,7 @@ impl TuiModel {
                 self.handle_modal_enter(kind);
                 if self.pending_quit {
                     self.pending_quit = false;
-                    return Cmd::quit();
+                    return true;
                 }
             }
             KeyCode::Backspace if is_searchable => {
@@ -588,7 +740,7 @@ impl TuiModel {
             _ => {}
         }
 
-        Cmd::none()
+        false
     }
 
     fn handle_modal_enter(&mut self, kind: modal::ModalKind) {
@@ -596,7 +748,12 @@ impl TuiModel {
         match kind {
             modal::ModalKind::CommandPalette => {
                 let cmd_name = self.modal.selected_command().map(|c| c.command.clone());
-                tracing::info!("selected_command: {:?}, cursor: {}, filtered: {:?}", cmd_name, self.modal.picker_cursor(), self.modal.filtered_items());
+                tracing::info!(
+                    "selected_command: {:?}, cursor: {}, filtered: {:?}",
+                    cmd_name,
+                    self.modal.picker_cursor(),
+                    self.modal.filtered_items()
+                );
                 self.modal.reduce(modal::ModalAction::Pop);
                 self.input.reduce(input::InputAction::Clear);
                 if let Some(command) = cmd_name {
@@ -615,7 +772,8 @@ impl TuiModel {
                     if let Some(thread) = threads.get(cursor - 1) {
                         let tid = thread.id.clone();
                         let title = thread.title.clone();
-                        self.chat.reduce(chat::ChatAction::SelectThread(tid.clone()));
+                        self.chat
+                            .reduce(chat::ChatAction::SelectThread(tid.clone()));
                         self.send_daemon_command(DaemonCommand::RequestThread(tid));
                         self.status_line = format!("Thread: {}", title);
                     }
@@ -624,13 +782,24 @@ impl TuiModel {
             modal::ModalKind::ProviderPicker => {
                 // Provider list is hardcoded in the widget; map cursor to provider name
                 let providers = [
-                    "openai", "anthropic", "groq", "ollama", "together",
-                    "deepinfra", "cerebras", "zai", "kimi", "qwen",
-                    "minimax", "openrouter", "custom",
+                    "openai",
+                    "anthropic",
+                    "groq",
+                    "ollama",
+                    "together",
+                    "deepinfra",
+                    "cerebras",
+                    "zai",
+                    "kimi",
+                    "qwen",
+                    "minimax",
+                    "openrouter",
+                    "custom",
                 ];
                 let cursor = self.modal.picker_cursor();
                 if let Some(&provider) = providers.get(cursor) {
-                    self.config.reduce(config::ConfigAction::SetProvider(provider.to_string()));
+                    self.config
+                        .reduce(config::ConfigAction::SetProvider(provider.to_string()));
                     self.status_line = format!("Provider: {}", provider);
                     // Sync to daemon
                     if let Ok(json) = serde_json::to_string(&serde_json::json!({
@@ -644,13 +813,15 @@ impl TuiModel {
             modal::ModalKind::ModelPicker => {
                 let models = self.config.fetched_models();
                 if models.is_empty() {
-                    // No models available — close picker
-                    self.status_line = "No models available. Set model in /settings".to_string();
+                    // No models available -- close picker
+                    self.status_line =
+                        "No models available. Set model in /settings".to_string();
                 } else {
                     let cursor = self.modal.picker_cursor();
                     if let Some(model) = models.get(cursor) {
                         let model_id = model.id.clone();
-                        self.config.reduce(config::ConfigAction::SetModel(model_id.clone()));
+                        self.config
+                            .reduce(config::ConfigAction::SetModel(model_id.clone()));
                         self.status_line = format!("Model: {}", model_id);
                         if let Ok(json) = serde_json::to_string(&serde_json::json!({
                             "model": model_id,
@@ -665,7 +836,10 @@ impl TuiModel {
                 let efforts = ["", "low", "medium", "high", "xhigh"];
                 let cursor = self.modal.picker_cursor();
                 if let Some(&effort) = efforts.get(cursor) {
-                    self.config.reduce(config::ConfigAction::SetReasoningEffort(effort.to_string()));
+                    self.config
+                        .reduce(config::ConfigAction::SetReasoningEffort(
+                            effort.to_string(),
+                        ));
                     if let Ok(json) = serde_json::to_string(&serde_json::json!({
                         "reasoning_effort": effort,
                     })) {
@@ -697,16 +871,18 @@ impl TuiModel {
                 // Populate with known models for current provider (offline, no daemon needed)
                 let models = known_models_for_provider(&self.config.provider);
                 if !models.is_empty() {
-                    self.config.reduce(config::ConfigAction::ModelsFetched(models));
+                    self.config
+                        .reduce(config::ConfigAction::ModelsFetched(models));
                 }
                 self.modal
                     .reduce(modal::ModalAction::Push(modal::ModalKind::ModelPicker));
             }
             "tools" => {
-                self.status_line = "Tools config: use /settings → Tools tab".to_string();
+                self.status_line = "Tools config: use /settings -> Tools tab".to_string();
             }
             "effort" => {
-                self.modal.reduce(modal::ModalAction::Push(modal::ModalKind::EffortPicker));
+                self.modal
+                    .reduce(modal::ModalAction::Push(modal::ModalKind::EffortPicker));
             }
             "thread" => self
                 .modal
@@ -722,14 +898,16 @@ impl TuiModel {
                     chat::TranscriptMode::Tools => chat::TranscriptMode::Full,
                     chat::TranscriptMode::Full => chat::TranscriptMode::Compact,
                 };
-                self.chat.reduce(chat::ChatAction::SetTranscriptMode(next));
+                self.chat
+                    .reduce(chat::ChatAction::SetTranscriptMode(next));
                 self.status_line = format!("View: {:?}", next);
             }
             "quit" => {
                 self.pending_quit = true;
             }
             "prompt" => {
-                self.status_line = "System prompt: use /settings → Agent tab".to_string();
+                self.status_line =
+                    "System prompt: use /settings -> Agent tab".to_string();
             }
             "goal" => {
                 self.status_line = "Goal runs: type your goal as a message".to_string();
@@ -783,219 +961,75 @@ impl TuiModel {
             self.input.set_mode(input::InputMode::Normal);
         }
     }
-}
 
-// ── StringModel implementation ───────────────────────────────────────────────
-
-impl StringModel for TuiModel {
-    type Message = Msg;
-
-    fn init(&mut self) -> Cmd<Msg> {
-        // Schedule a 50ms tick for polling daemon events
-        Cmd::Tick(Duration::from_millis(50))
+    pub fn handle_resize(&mut self, w: u16, h: u16) {
+        self.width = w;
+        self.height = h;
+        // Clear sidebar override on resize so layout recalculates from breakpoints
+        self.show_sidebar_override = None;
     }
 
-    fn update(&mut self, msg: Msg) -> Cmd<Msg> {
-        match msg {
-            Msg::Event(Event::Tick) => {
-                self.pump_daemon_events();
-                self.tick_counter = self.tick_counter.wrapping_add(1);
-                Cmd::Tick(Duration::from_millis(50))
-            }
-            Msg::Event(Event::Key(key)) => {
-                if key.kind != KeyEventKind::Press {
-                    return Cmd::none();
-                }
-                self.handle_key(key.code, key.modifiers)
-            }
-            Msg::Event(Event::Resize { width, height }) => {
-                self.width = width;
-                self.height = height;
-                // Clear sidebar override on resize so layout recalculates from breakpoints
-                self.show_sidebar_override = None;
-                Cmd::none()
-            }
-            Msg::Event(Event::Mouse(mouse)) => {
-                match mouse.kind {
-                    ftui_core::event::MouseEventKind::ScrollUp => {
-                        match self.focus {
-                            FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(3)),
-                            FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Scroll(3)),
-                            _ => {}
-                        }
-                    }
-                    ftui_core::event::MouseEventKind::ScrollDown => {
-                        match self.focus {
-                            FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(-3)),
-                            FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Scroll(-3)),
-                            _ => {}
-                        }
-                    }
-                    ftui_core::event::MouseEventKind::Down(ftui_core::event::MouseButton::Left) => {
-                        // Click-to-focus: determine which pane was clicked
-                        let sidebar_start = if self.width >= 80 {
-                            (self.width as usize * 65 / 100) as u16
-                        } else {
-                            self.width // no sidebar
-                        };
-                        if mouse.y >= 3 && mouse.y < self.height.saturating_sub(4) {
-                            if mouse.x < sidebar_start {
-                                self.focus = FocusArea::Chat;
-                            } else {
-                                self.focus = FocusArea::Sidebar;
-                            }
-                        } else if mouse.y >= self.height.saturating_sub(4) {
-                            self.focus = FocusArea::Input;
-                            self.input.set_mode(input::InputMode::Insert);
-                        }
-                    }
-                    _ => {}
-                }
-                Cmd::none()
-            }
-            _ => Cmd::none(),
-        }
-    }
-
-    fn view_string(&self) -> String {
-        let mut lines = Vec::new();
-        // Use actual terminal size, not stored (which may be stale/default)
-        let (term_w, term_h) = crossterm::terminal::size().unwrap_or((self.width, self.height));
-        let w = term_w as usize;
-        let h = term_h as usize;
-
-        // Header (3 lines)
-        let header_lines = crate::widgets::header::header_widget(
-            &self.config, &self.chat, &self.theme, false, w,
-        );
-        lines.extend(header_lines.iter().cloned());
-
-        // Footer (4 lines)
-        let footer_lines = crate::widgets::footer::footer_widget(
-            &self.input, &self.theme, self.focus.clone(), self.focus == FocusArea::Input, w,
-            &self.status_line,
-        );
-
-        // Body height
-        let body_h = (h).saturating_sub(lines.len() + footer_lines.len());
-        if body_h == 0 {
-            lines.extend(footer_lines);
-            return lines.join("\n");
-        }
-
-        // Two-pane layout calculation
-        // Responsive breakpoints:
-        //   >= 120: full two-pane (65/35)
-        //   100-119: compressed (70/30)
-        //   80-99: single pane + sidebar toggle (Ctrl+B)
-        //   < 80: single pane only
-        let default_show_sidebar = w >= 80;
-        let show_sidebar = self.show_sidebar_override.unwrap_or(default_show_sidebar);
-
-        if show_sidebar {
-            let gap = 1; // 1 col gap between panes
-            let sidebar_w = if w >= 120 {
-                (w * 33) / 100  // 33% for wide terminals
-            } else {
-                (w * 28) / 100  // 28% for medium/narrow
-            };
-            // Ensure total fits exactly — chat gets the remainder
-            let chat_w = w.saturating_sub(sidebar_w + gap);
-            // Sanity: if rounding causes total > w, shrink sidebar
-            let sidebar_w = w.saturating_sub(chat_w + gap);
-
-            let chat_lines = crate::widgets::chat::chat_widget(
-                &self.chat, &self.theme, self.focus == FocusArea::Chat, chat_w, body_h,
-            );
-            let sidebar_lines = crate::widgets::sidebar::sidebar_widget(
-                &self.sidebar, &self.tasks, &self.theme,
-                self.focus == FocusArea::Sidebar, sidebar_w, body_h,
-            );
-
-            // Merge side-by-side — both panes fitted to exact width
-            for i in 0..body_h {
-                let left = chat_lines.get(i).cloned().unwrap_or_default();
-                let right = sidebar_lines.get(i).cloned().unwrap_or_default();
-                let left_fitted = crate::widgets::fit_to_width(&left, chat_w);
-                let right_fitted = crate::widgets::fit_to_width(&right, sidebar_w);
-                lines.push(format!("{}{}{}", left_fitted, " ".repeat(gap), right_fitted));
-            }
-        } else {
-            // Single pane: full-width chat
-            let chat_lines = crate::widgets::chat::chat_widget(
-                &self.chat, &self.theme, self.focus == FocusArea::Chat, w, body_h,
-            );
-            lines.extend(chat_lines);
-        }
-
-        // Footer
-        lines.extend(footer_lines);
-
-        // Modal overlay — replaces the entire screen when active
-        if let Some(modal_kind) = self.modal.top() {
-            match modal_kind {
-                crate::state::modal::ModalKind::CommandPalette => {
-                    let overlay = crate::widgets::command_palette::command_palette_widget(
-                        &self.modal, &self.theme, w, h,
-                    );
-                    // Replace lines with overlay
-                    lines = overlay;
-                }
-                crate::state::modal::ModalKind::ThreadPicker => {
-                    lines = crate::widgets::thread_picker::thread_picker_widget(
-                        &self.chat, &self.modal, &self.theme, w, h,
-                    );
-                }
-                crate::state::modal::ModalKind::ApprovalOverlay => {
-                    lines = crate::widgets::approval::approval_widget(
-                        &self.approval, &self.theme, w, h,
-                    );
-                }
-                crate::state::modal::ModalKind::Settings => {
-                    lines = crate::widgets::settings::settings_widget(
-                        &self.settings, &self.config, &self.theme, w, h,
-                    );
-                }
-                crate::state::modal::ModalKind::ProviderPicker => {
-                    lines = crate::widgets::provider_picker::provider_picker_widget(
-                        &self.modal, &self.config, &self.theme, w, h,
-                    );
-                }
-                crate::state::modal::ModalKind::ModelPicker => {
-                    lines = crate::widgets::model_picker::model_picker_widget(
-                        &self.modal, &self.config, &self.theme, w, h,
-                    );
-                }
-                crate::state::modal::ModalKind::EffortPicker => {
-                    lines = render_effort_picker(&self.modal, &self.config, &self.theme, w, h);
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => match self.focus {
+                FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(3)),
+                FocusArea::Sidebar => {
+                    self.sidebar.reduce(sidebar::SidebarAction::Scroll(3))
                 }
                 _ => {}
+            },
+            MouseEventKind::ScrollDown => match self.focus {
+                FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(-3)),
+                FocusArea::Sidebar => {
+                    self.sidebar.reduce(sidebar::SidebarAction::Scroll(-3))
+                }
+                _ => {}
+            },
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Click-to-focus: determine which pane was clicked
+                let sidebar_start = if self.width >= 80 {
+                    (self.width as usize * 65 / 100) as u16
+                } else {
+                    self.width // no sidebar
+                };
+                if mouse.row >= 3 && mouse.row < self.height.saturating_sub(4) {
+                    if mouse.column < sidebar_start {
+                        self.focus = FocusArea::Chat;
+                    } else {
+                        self.focus = FocusArea::Sidebar;
+                    }
+                } else if mouse.row >= self.height.saturating_sub(4) {
+                    self.focus = FocusArea::Input;
+                    self.input.set_mode(input::InputMode::Insert);
+                }
             }
+            _ => {}
         }
-
-        // Safety: truncate every line to screen width to prevent overflow
-        let final_lines: Vec<String> = lines
-            .into_iter()
-            .map(|line| crate::widgets::truncate_to_width(&line, w))
-            .collect();
-        final_lines.join("\n")
     }
 }
 
-// ── Inline picker overlays ───────────────────────────────────────────────────
+// ── Inline effort picker ─────────────────────────────────────────────────────
 
 fn render_effort_picker(
+    frame: &mut Frame,
+    area: Rect,
     modal: &modal::ModalState,
     config: &config::ConfigState,
     theme: &ThemeTokens,
-    screen_w: usize,
-    screen_h: usize,
-) -> Vec<String> {
-    use crate::theme::{SHARP_BORDER, FG_CLOSE};
-    use crate::widgets::{repeat_char, pad_to_width, strip_markup_len};
+) {
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, BorderType, List, ListItem, Paragraph};
 
-    let bc = theme.accent_secondary.fg();
-    let b = &SHARP_BORDER;
+    let block = Block::default()
+        .title(" EFFORT ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(theme.accent_secondary);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let efforts = [
         ("", "Off"),
         ("low", "Low"),
@@ -1004,108 +1038,83 @@ fn render_effort_picker(
         ("xhigh", "Extra High"),
     ];
 
-    let picker_w = 40.min(screen_w);
-    let picker_h = (efforts.len() + 4).min(screen_h); // title + items + hints + borders
-    let inner_w = picker_w.saturating_sub(2);
-    let x_pad = (screen_w.saturating_sub(picker_w)) / 2;
-    let y_pad = (screen_h.saturating_sub(picker_h)) / 2;
-
     let cursor = modal.picker_cursor();
     let current = config.reasoning_effort();
 
-    let mut result = Vec::new();
+    let items: Vec<ListItem> = efforts
+        .iter()
+        .enumerate()
+        .map(|(i, (value, label))| {
+            let is_current = *value == current;
+            let marker = if is_current { "\u{25cf} " } else { "  " };
+            let is_selected = i == cursor;
 
-    // Top padding
-    for _ in 0..y_pad {
-        result.push(" ".repeat(screen_w));
-    }
+            if is_selected {
+                ListItem::new(Line::from(vec![
+                    Span::raw("> "),
+                    Span::raw(marker),
+                    Span::raw(*label),
+                ]))
+                .style(
+                    Style::default()
+                        .bg(Color::Indexed(178))
+                        .fg(Color::Black),
+                )
+            } else {
+                let style = if is_current {
+                    theme.accent_primary
+                } else {
+                    theme.fg_dim
+                };
+                ListItem::new(Line::from(vec![
+                    Span::raw("  "),
+                    Span::raw(marker),
+                    Span::styled(*label, style),
+                ]))
+            }
+        })
+        .collect();
 
-    // Top border
-    let title = " EFFORT ";
-    result.push(format!(
-        "{}{}{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.top_left,
-        repeat_char(b.horizontal, 1),
-        title,
-        repeat_char(b.horizontal, inner_w.saturating_sub(title.len() + 1)),
-        b.top_right,
-        FG_CLOSE,
-        " ".repeat(screen_w.saturating_sub(x_pad + picker_w)),
-    ));
+    // Split inner into list area and hints area
+    let inner_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
 
-    // Items
-    for (i, (value, label)) in efforts.iter().enumerate() {
-        let is_selected = i == cursor;
-        let is_current = *value == current;
-        let marker = if is_current { "●" } else { " " };
-
-        let line = if is_selected {
-            format!(
-                " {}[bg=rgb(178,135,0)]> {} {}[/bg]{}",
-                FG_CLOSE,
-                marker, label,
-                FG_CLOSE,
-            )
-        } else {
-            format!(
-                "   {} {}{}{}{}",
-                marker,
-                if is_current { theme.accent_primary.fg() } else { theme.fg_dim.fg() },
-                label,
-                FG_CLOSE,
-                "",
-            )
-        };
-
-        let padded = pad_to_width(&line, inner_w);
-        result.push(format!(
-            "{}{}{}{}{}{}{}",
-            " ".repeat(x_pad),
-            bc, b.vertical,
-            padded,
-            b.vertical,
-            FG_CLOSE,
-            " ".repeat(screen_w.saturating_sub(x_pad + picker_w)),
-        ));
-    }
+    let list = List::new(items);
+    frame.render_widget(list, inner_chunks[0]);
 
     // Hints
-    let hints = format!(
-        " {}j/k{} navigate  {}Enter{} select  {}Esc{} close{}",
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        FG_CLOSE,
-    );
-    let padded_hints = pad_to_width(&hints, inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_hints,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_w.saturating_sub(x_pad + picker_w)),
-    ));
+    let hints = Line::from(vec![
+        Span::styled("j/k", theme.fg_active),
+        Span::styled(" nav  ", theme.fg_dim),
+        Span::styled("Enter", theme.fg_active),
+        Span::styled(" sel  ", theme.fg_dim),
+        Span::styled("Esc", theme.fg_active),
+        Span::styled(" close", theme.fg_dim),
+    ]);
+    frame.render_widget(Paragraph::new(hints), inner_chunks[1]);
+}
 
-    // Bottom border
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.bottom_left,
-        repeat_char(b.horizontal, inner_w),
-        b.bottom_right,
-        FG_CLOSE,
-        " ".repeat(screen_w.saturating_sub(x_pad + picker_w)),
-    ));
+// ── Helper ───────────────────────────────────────────────────────────────────
 
-    // Bottom padding
-    while result.len() < screen_h {
-        result.push(" ".repeat(screen_w));
-    }
-    result.truncate(screen_h);
-    result
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 // ── Wire-to-state type conversions ───────────────────────────────────────────
@@ -1262,4 +1271,3 @@ fn known_models_for_provider(provider: &str) -> Vec<config::FetchedModel> {
         })
         .collect()
 }
-

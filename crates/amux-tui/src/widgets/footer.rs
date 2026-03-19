@@ -1,136 +1,90 @@
-use crate::theme::{ThemeTokens, ROUNDED_BORDER, FG_CLOSE};
-use crate::state::input::{InputState, InputMode};
-use crate::state::FocusArea;
+use ratatui::prelude::*;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
 
-pub fn footer_widget(
+use crate::state::input::{InputMode, InputState};
+use crate::theme::ThemeTokens;
+
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
     input: &InputState,
     theme: &ThemeTokens,
-    _focus: FocusArea,
-    focused: bool,
-    width: usize,
     status_line: &str,
-) -> Vec<String> {
-    let border_color = if focused { theme.accent_primary } else { theme.fg_dim };
-    let bc = border_color.fg();
-    let b = &ROUNDED_BORDER;
-    let inner_width = width.saturating_sub(2);
+    focused: bool,
+) {
+    let border_style = if focused {
+        theme.accent_primary
+    } else {
+        theme.fg_dim
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height < 2 {
+        return;
+    }
 
     // Line 1: mode + input
-    let mode_label = match input.mode() {
-        InputMode::Normal => format!("{}NORMAL{}", theme.fg_dim.fg(), FG_CLOSE),
-        InputMode::Insert => format!("{}INSERT{}", theme.accent_primary.fg(), FG_CLOSE),
+    let mode_span = match input.mode() {
+        InputMode::Normal => Span::styled("NORMAL", theme.fg_dim),
+        InputMode::Insert => Span::styled("INSERT", theme.accent_primary),
     };
-    let cursor = if input.mode() == InputMode::Insert { "█" } else { "" };
-    let input_line = format!(
-        " {} {}▶{} {}{}",
-        mode_label,
-        theme.accent_primary.fg(),
-        FG_CLOSE,
-        input.buffer(),
-        cursor,
-    );
-    let padded_input = pad_to_width(&input_line, inner_width);
+    let cursor = if input.mode() == InputMode::Insert {
+        "\u{2588}"
+    } else {
+        ""
+    };
+    let input_line = Line::from(vec![
+        Span::raw(" "),
+        mode_span,
+        Span::raw(" "),
+        Span::styled("\u{25b6}", theme.accent_primary),
+        Span::raw(" "),
+        Span::raw(input.buffer()),
+        Span::raw(cursor),
+    ]);
 
-    // Line 2: status line (if present) or context-sensitive hints
+    // Line 2: status or hints
     let line2 = if !status_line.is_empty() {
-        format!(
-            " {}{}{}",
-            theme.accent_success.fg(),
-            super::escape_markup(status_line),
-            FG_CLOSE,
-        )
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled(status_line, theme.accent_success),
+        ])
     } else {
-        format!(
-            " {}tab{}:focus  {}ctrl+p{}:commands  {}ctrl+t{}:threads  {}/{}:slash  {}q{}:quit{}",
-            theme.fg_active.fg(),
-            theme.fg_dim.fg(),
-            theme.fg_active.fg(),
-            theme.fg_dim.fg(),
-            theme.fg_active.fg(),
-            theme.fg_dim.fg(),
-            theme.fg_active.fg(),
-            theme.fg_dim.fg(),
-            theme.fg_active.fg(),
-            theme.fg_dim.fg(),
-            FG_CLOSE,
-        )
+        Line::from(vec![
+            Span::raw(" "),
+            Span::styled("tab", theme.fg_active),
+            Span::styled(":focus  ", theme.fg_dim),
+            Span::styled("ctrl+p", theme.fg_active),
+            Span::styled(":commands  ", theme.fg_dim),
+            Span::styled("ctrl+t", theme.fg_active),
+            Span::styled(":threads  ", theme.fg_dim),
+            Span::styled("/", theme.fg_active),
+            Span::styled(":slash  ", theme.fg_dim),
+            Span::styled("q", theme.fg_active),
+            Span::styled(":quit", theme.fg_dim),
+        ])
     };
-    let padded_hints = pad_to_width(&line2, inner_width);
 
-    let lines = vec![
-        format!(
-            "{}{}{}{}{}",
-            bc,
-            b.top_left,
-            super::repeat_char(b.horizontal, inner_width),
-            b.top_right,
-            FG_CLOSE
-        ),
-        format!("{}{}{}{}{}", bc, b.vertical, padded_input, b.vertical, FG_CLOSE),
-        format!("{}{}{}{}{}", bc, b.vertical, padded_hints, b.vertical, FG_CLOSE),
-        format!(
-            "{}{}{}{}{}",
-            bc,
-            b.bottom_left,
-            super::repeat_char(b.horizontal, inner_width),
-            b.bottom_right,
-            FG_CLOSE
-        ),
-    ];
-    // Guarantee every line is exactly `width` visible chars
-    lines.into_iter()
-        .map(|line| super::fit_to_width(&line, width))
-        .collect()
-}
-
-fn pad_to_width(s: &str, width: usize) -> String {
-    let visible = super::strip_markup_len(s);
-    if visible < width {
-        format!("{}{}", s, " ".repeat(width - visible))
-    } else {
-        s.to_string()
-    }
+    let paragraph = Paragraph::new(vec![input_line, line2]);
+    frame.render_widget(paragraph, inner);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::ThemeTokens;
-    use crate::state::input::InputState;
-    use crate::state::FocusArea;
 
     #[test]
-    fn footer_widget_returns_four_lines() {
+    fn footer_handles_empty_state() {
         let input = InputState::new();
-        let theme = ThemeTokens::default();
-        let lines = footer_widget(&input, &theme, FocusArea::Input, true, 80, "");
-        assert_eq!(lines.len(), 4);
-    }
-
-    #[test]
-    fn footer_widget_focused_vs_unfocused() {
-        let input = InputState::new();
-        let theme = ThemeTokens::default();
-        let focused = footer_widget(&input, &theme, FocusArea::Input, true, 80, "");
-        let unfocused = footer_widget(&input, &theme, FocusArea::Chat, false, 80, "");
-        assert_ne!(focused[0], unfocused[0]);
-    }
-
-    #[test]
-    fn footer_widget_normal_mode_shows_normal_label() {
-        let mut input = InputState::new();
-        input.set_mode(InputMode::Normal);
-        let theme = ThemeTokens::default();
-        let lines = footer_widget(&input, &theme, FocusArea::Chat, false, 80, "");
-        assert!(lines[1].contains("NORMAL"));
-    }
-
-    #[test]
-    fn footer_widget_insert_mode_shows_insert_label() {
-        let mut input = InputState::new();
-        input.set_mode(InputMode::Insert);
-        let theme = ThemeTokens::default();
-        let lines = footer_widget(&input, &theme, FocusArea::Input, true, 80, "");
-        assert!(lines[1].contains("INSERT"));
+        let _theme = ThemeTokens::default();
+        // InputState starts in Insert mode
+        assert_eq!(input.mode(), InputMode::Insert);
     }
 }

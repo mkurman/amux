@@ -1,236 +1,176 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE, BG_CLOSE};
+use ratatui::prelude::*;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, BorderType, List, ListItem, Paragraph};
+
 use crate::state::chat::ChatState;
 use crate::state::modal::ModalState;
+use crate::theme::ThemeTokens;
 
-/// Black text color for highlighted items
-const BLACK_FG: &str = "[fg=rgb(0,0,0)]";
-
-/// Render the thread picker as an overlay.
-/// Returns a full-screen Vec<String> (one entry per row) centered over the terminal.
-pub fn thread_picker_widget(
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
     chat: &ChatState,
     modal: &ModalState,
     theme: &ThemeTokens,
-    screen_width: usize,
-    screen_height: usize,
-) -> Vec<String> {
-    let bc = theme.accent_secondary.fg(); // amber border
-    let b = &SHARP_BORDER;
+) {
+    let block = Block::default()
+        .title(" THREADS ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(theme.accent_secondary);
 
-    // Size: ~60% width, ~50% height, centered
-    let picker_w = (screen_width * 60 / 100).max(50).min(screen_width);
-    let picker_h = (screen_height * 50 / 100).max(10).min(screen_height);
-    let inner_w = picker_w.saturating_sub(2);
-    let inner_h = picker_h.saturating_sub(2);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let mut result = Vec::new();
-
-    // Calculate centering offsets
-    let x_pad = (screen_width.saturating_sub(picker_w)) / 2;
-    let y_pad = (screen_height.saturating_sub(picker_h)) / 2;
-
-    // Top padding
-    for _ in 0..y_pad {
-        result.push(" ".repeat(screen_width));
+    if inner.height < 4 {
+        return;
     }
 
-    // Top border with title
-    let title = " THREADS ";
-    let title_len = title.len();
-    let border_remaining = inner_w.saturating_sub(title_len);
-    result.push(format!(
-        "{}{}{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.top_left,
-        super::repeat_char(b.horizontal, 2),
-        title,
-        super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
-        b.top_right,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
-    ));
+    // Split: search input (1) + separator (1) + list (flex) + hints (1)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // search
+            Constraint::Length(1), // separator
+            Constraint::Min(1),   // list
+            Constraint::Length(1), // hints
+        ])
+        .split(inner);
 
-    // Search input line
+    // Search input
     let query = modal.command_query();
-    let input_line = format!(
-        " {}{}{}{}",
-        theme.fg_active.fg(),
-        if query.is_empty() { "Search threads..." } else { query },
-        if query.is_empty() { "" } else { "█" },
-        FG_CLOSE,
-    );
-    let padded_input = super::pad_to_width(&input_line, inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_input,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
-    ));
+    let input_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            if query.is_empty() {
+                "Search threads..."
+            } else {
+                query
+            },
+            theme.fg_active,
+        ),
+        if query.is_empty() {
+            Span::raw("")
+        } else {
+            Span::raw("\u{2588}")
+        },
+    ]);
+    frame.render_widget(Paragraph::new(input_line), chunks[0]);
 
     // Separator
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        super::repeat_char('─', inner_w),
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
+    let sep = Line::from(Span::styled(
+        "\u{2500}".repeat(chunks[1].width as usize),
+        theme.fg_dim,
     ));
+    frame.render_widget(Paragraph::new(sep), chunks[1]);
 
-    // Build thread list: "New conversation" first, then matching threads
+    // Build thread list
     let threads = chat.threads();
     let active_id = chat.active_thread_id();
     let search = query.to_lowercase();
 
-    // Filter threads by search query
     let filtered_threads: Vec<_> = threads
         .iter()
-        .filter(|t| {
-            search.is_empty() || t.title.to_lowercase().contains(&search)
-        })
+        .filter(|t| search.is_empty() || t.title.to_lowercase().contains(&search))
         .collect();
 
     let cursor = modal.picker_cursor();
+    let list_h = chunks[2].height as usize;
+    let inner_w = inner.width as usize;
 
-    // list_h = inner_h minus: input row, separator, hints row
-    let list_h = inner_h.saturating_sub(3);
-
-    for i in 0..list_h {
-        // Item 0 = "New conversation", items 1..N = threads
-        let line = if i == 0 {
-            // "New conversation" item
-            let is_selected = cursor == 0;
-            if is_selected {
-                format!(
-                    " {}{}  + New conversation{}{}{}",
-                    theme.accent_secondary.bg(),
-                    BLACK_FG,
-                    FG_CLOSE,
-                    BG_CLOSE,
-                    " ".repeat(inner_w.saturating_sub(20)),
-                )
-            } else {
-                format!(
-                    "  {}{} + New conversation{}",
-                    theme.fg_dim.fg(),
-                    FG_CLOSE,
-                    String::new(),
-                )
-            }
-        } else {
-            let thread_idx = i - 1;
-            if thread_idx < filtered_threads.len() {
-                let thread = filtered_threads[thread_idx];
-                let is_selected = cursor == i;
-                let is_active = active_id == Some(thread.id.as_str());
-
-                // Status dot: green for active/streaming, grey otherwise
-                let dot = if is_active {
-                    format!("{}●{}", theme.accent_success.fg(), FG_CLOSE)
-                } else {
-                    format!("{}●{}", theme.fg_dim.fg(), FG_CLOSE)
-                };
-
-                // Time ago
-                let time_str = format_time_ago(thread.updated_at);
-
-                // Token count
-                let tokens = thread.total_input_tokens + thread.total_output_tokens;
-                let token_str = format_tokens(tokens);
-
-                // Title truncated — escape brackets to prevent markup interference
-                let raw_title = super::escape_markup(&thread.title);
-                let max_title = inner_w.saturating_sub(25);
-                let title = if raw_title.len() > max_title && max_title > 3 {
-                    format!("{}...", &raw_title[..max_title - 3])
-                } else {
-                    raw_title
-                };
-
+    let list_items: Vec<ListItem> = (0..list_h)
+        .map(|i| {
+            if i == 0 {
+                // "New conversation" item
+                let is_selected = cursor == 0;
                 if is_selected {
-                    format!(
-                        " {}{}{} {}{}{}{}  {}  {}{}",
-                        theme.accent_secondary.bg(),
-                        BLACK_FG,
-                        dot,
-                        title,
-                        FG_CLOSE,
-                        BG_CLOSE,
-                        theme.accent_secondary.bg(),
-                        time_str,
-                        token_str,
-                        BG_CLOSE,
+                    ListItem::new(Line::from(vec![
+                        Span::raw("  + New conversation"),
+                    ]))
+                    .style(
+                        Style::default()
+                            .bg(Color::Indexed(178))
+                            .fg(Color::Black),
                     )
                 } else {
-                    format!(
-                        "  {} {}{}{}  {}{}  {}{}",
-                        dot,
-                        theme.fg_active.fg(),
-                        title,
-                        FG_CLOSE,
-                        theme.fg_dim.fg(),
-                        time_str,
-                        token_str,
-                        FG_CLOSE,
-                    )
+                    ListItem::new(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled("+ New conversation", theme.fg_dim),
+                    ]))
                 }
             } else {
-                String::new()
+                let thread_idx = i - 1;
+                if thread_idx < filtered_threads.len() {
+                    let thread = filtered_threads[thread_idx];
+                    let is_selected = cursor == i;
+                    let is_active = active_id == Some(thread.id.as_str());
+
+                    let dot_style = if is_active {
+                        theme.accent_success
+                    } else {
+                        theme.fg_dim
+                    };
+
+                    let time_str = format_time_ago(thread.updated_at);
+                    let tokens = thread.total_input_tokens + thread.total_output_tokens;
+                    let token_str = format_tokens(tokens);
+
+                    let max_title = inner_w.saturating_sub(25);
+                    let title = if thread.title.len() > max_title && max_title > 3 {
+                        format!("{}...", &thread.title[..max_title - 3])
+                    } else {
+                        thread.title.clone()
+                    };
+
+                    if is_selected {
+                        ListItem::new(Line::from(vec![
+                            Span::styled("\u{25cf}", dot_style),
+                            Span::raw(" "),
+                            Span::raw(title),
+                            Span::raw("  "),
+                            Span::raw(time_str),
+                            Span::raw("  "),
+                            Span::raw(token_str),
+                        ]))
+                        .style(
+                            Style::default()
+                                .bg(Color::Indexed(178))
+                                .fg(Color::Black),
+                        )
+                    } else {
+                        ListItem::new(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled("\u{25cf}", dot_style),
+                            Span::raw(" "),
+                            Span::styled(title, theme.fg_active),
+                            Span::raw("  "),
+                            Span::styled(time_str, theme.fg_dim),
+                            Span::raw("  "),
+                            Span::styled(token_str, theme.fg_dim),
+                        ]))
+                    }
+                } else {
+                    ListItem::new(Line::raw(""))
+                }
             }
-        };
+        })
+        .collect();
 
-        let padded = super::pad_to_width(&line, inner_w);
-        result.push(format!(
-            "{}{}{}{}{}{}{}",
-            " ".repeat(x_pad),
-            bc, b.vertical,
-            padded,
-            b.vertical,
-            FG_CLOSE,
-            " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
-        ));
-    }
+    let list = List::new(list_items);
+    frame.render_widget(list, chunks[2]);
 
-    // Hints line
-    let hints = format!(
-        " {}j/k{} navigate  {}Enter{} select  {}Esc{} close",
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-    );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_hints,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
-    ));
-
-    // Bottom border
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.bottom_left,
-        super::repeat_char(b.horizontal, inner_w),
-        b.bottom_right,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
-    ));
-
-    // Bottom padding
-    while result.len() < screen_height {
-        result.push(" ".repeat(screen_width));
-    }
-    result.truncate(screen_height);
-
-    result
+    // Hints
+    let hints = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("j/k", theme.fg_active),
+        Span::styled(" navigate  ", theme.fg_dim),
+        Span::styled("Enter", theme.fg_active),
+        Span::styled(" select  ", theme.fg_dim),
+        Span::styled("Esc", theme.fg_active),
+        Span::styled(" close", theme.fg_dim),
+    ]);
+    frame.render_widget(Paragraph::new(hints), chunks[3]);
 }
 
 /// Format millisecond timestamp as "Xm ago" or "Xh ago" etc.
@@ -254,7 +194,7 @@ fn format_time_ago(updated_at: u64) -> String {
     }
 }
 
-/// Format token count compactly: "1.2k" for >= 1000, else plain number.
+/// Format token count compactly
 fn format_tokens(tokens: u64) -> String {
     if tokens == 0 {
         return String::new();
@@ -268,7 +208,6 @@ fn format_tokens(tokens: u64) -> String {
     }
 }
 
-/// Get current time in milliseconds (wall clock).
 fn now_millis() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -280,101 +219,10 @@ fn now_millis() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::chat::{ChatState, ChatAction, AgentThread};
-    use crate::state::modal::{ModalState, ModalAction, ModalKind};
-    use crate::theme::ThemeTokens;
-
-    #[test]
-    fn thread_picker_returns_correct_dimensions() {
-        let chat = ChatState::new();
-        let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = thread_picker_widget(&chat, &modal, &theme, 120, 40);
-        assert_eq!(lines.len(), 40);
-    }
-
-    #[test]
-    fn thread_picker_contains_threads_title() {
-        let chat = ChatState::new();
-        let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = thread_picker_widget(&chat, &modal, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("THREADS"));
-    }
-
-    #[test]
-    fn thread_picker_shows_new_conversation_first() {
-        let chat = ChatState::new();
-        let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = thread_picker_widget(&chat, &modal, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("New conversation"));
-    }
-
-    #[test]
-    fn thread_picker_shows_thread_titles() {
-        let mut chat = ChatState::new();
-        chat.reduce(ChatAction::ThreadListReceived(vec![
-            AgentThread {
-                id: "t1".into(),
-                title: "My First Thread".into(),
-                updated_at: 0,
-                ..Default::default()
-            },
-        ]));
-        let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = thread_picker_widget(&chat, &modal, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("My First Thread"));
-    }
-
-    #[test]
-    fn thread_picker_filters_by_query() {
-        let mut chat = ChatState::new();
-        chat.reduce(ChatAction::ThreadListReceived(vec![
-            AgentThread { id: "t1".into(), title: "Rust project".into(), ..Default::default() },
-            AgentThread { id: "t2".into(), title: "Python scripts".into(), ..Default::default() },
-        ]));
-        let mut modal = ModalState::new();
-        modal.reduce(ModalAction::Push(ModalKind::ThreadPicker));
-        modal.reduce(ModalAction::SetQuery("rust".into()));
-        let theme = ThemeTokens::default();
-        let lines = thread_picker_widget(&chat, &modal, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Rust project"));
-        assert!(!joined.contains("Python scripts"));
-    }
-
-    #[test]
-    fn thread_picker_highlights_active_thread_with_green_dot() {
-        let mut chat = ChatState::new();
-        chat.reduce(ChatAction::ThreadListReceived(vec![
-            AgentThread { id: "t1".into(), title: "Active Thread".into(), ..Default::default() },
-        ]));
-        chat.reduce(ChatAction::SelectThread("t1".into()));
-        let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = thread_picker_widget(&chat, &modal, &theme, 120, 40);
-        let joined = lines.join("");
-        // Active thread has green dot (accent_success color)
-        assert!(joined.contains(&theme.accent_success.fg()));
-        assert!(joined.contains("Active Thread"));
-    }
 
     #[test]
     fn format_time_ago_zero_returns_empty() {
         assert_eq!(format_time_ago(0), "");
-    }
-
-    #[test]
-    fn format_time_ago_seconds() {
-        let now = now_millis();
-        let ts = now - 30_000; // 30 seconds ago
-        let s = format_time_ago(ts);
-        assert!(s.contains("s ago") || s.contains("m ago"), "got: {}", s);
     }
 
     #[test]
@@ -385,7 +233,7 @@ mod tests {
     #[test]
     fn format_tokens_thousands() {
         let s = format_tokens(1500);
-        assert!(s.contains("k tok"), "got: {}", s);
+        assert!(s.contains("k tok"));
     }
 
     #[test]

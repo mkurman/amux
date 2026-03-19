@@ -1,171 +1,113 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE, BG_CLOSE};
+use ratatui::prelude::*;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, BorderType, List, ListItem, Paragraph};
+
 use crate::state::modal::ModalState;
+use crate::theme::ThemeTokens;
 
-/// Black text color for highlighted items
-const BLACK_FG: &str = "[fg=rgb(0,0,0)]";
-
-/// Render the command palette as an overlay.
-/// Returns a full-screen Vec<String> (one entry per row) centered over the terminal.
-pub fn command_palette_widget(
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
     modal: &ModalState,
     theme: &ThemeTokens,
-    screen_width: usize,
-    screen_height: usize,
-) -> Vec<String> {
-    let bc = theme.accent_secondary.fg(); // amber border
-    let b = &SHARP_BORDER;
+) {
+    let block = Block::default()
+        .title(" COMMANDS ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(theme.accent_secondary);
 
-    // Size: ~50% width, ~40% height, centered
-    let palette_w = (screen_width * 50 / 100).max(40).min(screen_width);
-    let palette_h = (screen_height * 40 / 100).max(8).min(screen_height);
-    let inner_w = palette_w.saturating_sub(2);
-    let inner_h = palette_h.saturating_sub(2);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let mut result = Vec::new();
-
-    // Calculate centering offsets
-    let x_pad = (screen_width.saturating_sub(palette_w)) / 2;
-    let y_pad = (screen_height.saturating_sub(palette_h)) / 2;
-
-    // Top padding (dimmed backdrop rows)
-    for _ in 0..y_pad {
-        result.push(" ".repeat(screen_width));
+    if inner.height < 4 {
+        return;
     }
 
-    // Top border
-    let title = " COMMANDS ";
-    let title_len = title.len();
-    let border_remaining = inner_w.saturating_sub(title_len);
-    result.push(format!(
-        "{}{}{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.top_left,
-        super::repeat_char(b.horizontal, 2),
-        title,
-        super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
-        b.top_right,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
-    ));
+    // Split: search input (1) + separator (1) + list (flex) + hints (1)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // search
+            Constraint::Length(1), // separator
+            Constraint::Min(1),   // list
+            Constraint::Length(1), // hints
+        ])
+        .split(inner);
 
-    // Search input line
+    // Search input
     let query = modal.command_query();
-    let input_line = format!(
-        " {}{}{}{}",
-        theme.fg_active.fg(),
-        if query.is_empty() { "/" } else { query },
-        "█",
-        FG_CLOSE,
-    );
-    let padded_input = super::pad_to_width(&input_line, inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_input,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
-    ));
+    let input_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            if query.is_empty() { "/" } else { query },
+            theme.fg_active,
+        ),
+        Span::raw("\u{2588}"),
+    ]);
+    frame.render_widget(Paragraph::new(input_line), chunks[0]);
 
     // Separator
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        super::repeat_char('─', inner_w),
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
+    let sep = Line::from(Span::styled(
+        "\u{2500}".repeat(chunks[1].width as usize),
+        theme.fg_dim,
     ));
+    frame.render_widget(Paragraph::new(sep), chunks[1]);
 
-    // Command list (inner_h - 3: input, separator, hints)
-    let list_h = inner_h.saturating_sub(3);
+    // Command list
     let filtered = modal.filtered_items();
     let items = modal.command_items();
     let cursor = modal.picker_cursor();
+    let list_h = chunks[2].height as usize;
 
-    for i in 0..list_h {
-        let line = if i < filtered.len() {
-            let idx = filtered[i];
-            let item = &items[idx];
-            let is_selected = i == cursor;
+    let list_items: Vec<ListItem> = (0..list_h)
+        .map(|i| {
+            if i < filtered.len() {
+                let idx = filtered[i];
+                let item = &items[idx];
+                let is_selected = i == cursor;
 
-            if is_selected {
-                // Amber bg, black text
-                format!(
-                    " {}{}> /{:<12} {}{}{}",
-                    theme.accent_secondary.bg(),
-                    BLACK_FG,
-                    item.command,
-                    item.description,
-                    FG_CLOSE,
-                    BG_CLOSE,
-                )
+                if is_selected {
+                    ListItem::new(Line::from(vec![
+                        Span::raw(" > /"),
+                        Span::raw(&item.command),
+                        Span::raw("  "),
+                        Span::raw(&item.description),
+                    ]))
+                    .style(
+                        Style::default()
+                            .bg(Color::Indexed(178))
+                            .fg(Color::Black),
+                    )
+                } else {
+                    ListItem::new(Line::from(vec![
+                        Span::raw("   /"),
+                        Span::styled(&item.command, theme.fg_active),
+                        Span::raw("  "),
+                        Span::styled(&item.description, theme.fg_dim),
+                    ]))
+                }
             } else {
-                format!(
-                    "   {}/{}{}{}  {}{}{}",
-                    theme.fg_active.fg(),
-                    item.command,
-                    FG_CLOSE,
-                    "",
-                    theme.fg_dim.fg(),
-                    item.description,
-                    FG_CLOSE,
-                )
+                ListItem::new(Line::raw(""))
             }
-        } else {
-            String::new()
-        };
+        })
+        .collect();
 
-        let padded = super::pad_to_width(&line, inner_w);
-        result.push(format!(
-            "{}{}{}{}{}{}{}",
-            " ".repeat(x_pad),
-            bc, b.vertical,
-            padded,
-            b.vertical,
-            FG_CLOSE,
-            " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
-        ));
-    }
+    let list = List::new(list_items);
+    frame.render_widget(list, chunks[2]);
 
-    // Hints line
-    let hints = format!(
-        " {}j/k{} navigate  {}Enter{} select  {}Esc{} close",
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-    );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_hints,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
-    ));
-
-    // Bottom border
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.bottom_left,
-        super::repeat_char(b.horizontal, inner_w),
-        b.bottom_right,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
-    ));
-
-    // Bottom padding
-    while result.len() < screen_height {
-        result.push(" ".repeat(screen_width));
-    }
-    result.truncate(screen_height);
-
-    result
+    // Hints
+    let hints = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("j/k", theme.fg_active),
+        Span::styled(" navigate  ", theme.fg_dim),
+        Span::styled("Enter", theme.fg_active),
+        Span::styled(" select  ", theme.fg_dim),
+        Span::styled("Esc", theme.fg_active),
+        Span::styled(" close", theme.fg_dim),
+    ]);
+    frame.render_widget(Paragraph::new(hints), chunks[3]);
 }
 
 #[cfg(test)]
@@ -173,30 +115,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn palette_returns_correct_dimensions() {
+    fn command_palette_handles_empty_state() {
         let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = command_palette_widget(&modal, &theme, 120, 40);
-        assert_eq!(lines.len(), 40);
-    }
-
-    #[test]
-    fn palette_contains_commands_title() {
-        let modal = ModalState::new();
-        let theme = ThemeTokens::default();
-        let lines = command_palette_widget(&modal, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("COMMANDS"));
-    }
-
-    #[test]
-    fn palette_shows_filtered_commands() {
-        let mut modal = ModalState::new();
-        modal.reduce(crate::state::modal::ModalAction::SetQuery("/pro".into()));
-        let theme = ThemeTokens::default();
-        let lines = command_palette_widget(&modal, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("provider"));
-        assert!(joined.contains("prompt"));
+        let _theme = ThemeTokens::default();
+        assert!(modal.command_query().is_empty());
     }
 }

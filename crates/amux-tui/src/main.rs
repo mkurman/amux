@@ -6,17 +6,23 @@ mod theme;
 mod widgets;
 mod wire;
 
-use std::{sync::mpsc, thread};
+use std::io;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use anyhow::Result;
-use ftui_runtime::{App, ScreenMode};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
+use ratatui::prelude::*;
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::app::TuiModel;
 use crate::client::DaemonClient;
 use crate::state::DaemonCommand;
-
-mod markup_adapter;
 
 fn main() -> Result<()> {
     let log_file = std::fs::File::create(std::env::temp_dir().join("tamux-tui.log"))?;
@@ -25,19 +31,62 @@ fn main() -> Result<()> {
         .with_writer(log_file)
         .init();
 
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    // Setup daemon bridge
     let (daemon_event_tx, daemon_event_rx) = mpsc::channel();
     let (daemon_cmd_tx, daemon_cmd_rx) = tokio_mpsc::unbounded_channel();
-
     start_daemon_bridge(daemon_event_tx, daemon_cmd_rx);
 
-    let model = TuiModel::new(daemon_event_rx, daemon_cmd_tx);
+    // Create model
+    let mut model = TuiModel::new(daemon_event_rx, daemon_cmd_tx);
 
-    App::new(markup_adapter::MarkupModelAdapter::new(model))
-        .screen_mode(ScreenMode::AltScreen)
-        .with_mouse()
-        .run()?;
+    // Main loop
+    let tick_rate = Duration::from_millis(50);
+    let result = run_loop(&mut terminal, &mut model, tick_rate);
 
-    Ok(())
+    // Restore terminal
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(DisableMouseCapture)?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    result
+}
+
+fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    model: &mut TuiModel,
+    tick_rate: Duration,
+) -> Result<()> {
+    loop {
+        terminal.draw(|frame| {
+            model.render(frame);
+        })?;
+
+        // Poll for events with timeout
+        if event::poll(tick_rate)? {
+            match event::read()? {
+                Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => {
+                    if model.handle_key(key.code, key.modifiers) {
+                        return Ok(());
+                    }
+                }
+                Event::Resize(w, h) => model.handle_resize(w, h),
+                Event::Mouse(mouse) => model.handle_mouse(mouse),
+                _ => {}
+            }
+        }
+
+        model.pump_daemon_events();
+    }
 }
 
 fn start_daemon_bridge(

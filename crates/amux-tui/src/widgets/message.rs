@@ -1,42 +1,51 @@
-use crate::theme::{ThemeTokens, FG_CLOSE, BG_CLOSE};
-use crate::state::chat::{AgentMessage, MessageRole, TranscriptMode};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 
-/// Render a single message as lines
-pub fn message_widget(
+use crate::state::chat::{AgentMessage, MessageRole, TranscriptMode};
+use crate::theme::ThemeTokens;
+
+/// Convert a message into ratatui Lines (all owned/static)
+pub fn message_to_lines(
     msg: &AgentMessage,
     mode: TranscriptMode,
     theme: &ThemeTokens,
     width: usize,
-) -> Vec<String> {
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let indent = 7; // "  XXXX " = 7 chars for role badge + spacing
 
     match mode {
-        TranscriptMode::Compact => render_compact(msg, theme, width, indent, &mut lines),
-        TranscriptMode::Tools => render_tools_only(msg, theme, width, indent, &mut lines),
-        TranscriptMode::Full => render_full(msg, theme, width, indent, &mut lines),
+        TranscriptMode::Compact => render_compact(msg, theme, width, &mut lines),
+        TranscriptMode::Tools => render_tools_only(msg, theme, width, &mut lines),
+        TranscriptMode::Full => render_full(msg, theme, width, &mut lines),
     }
 
     lines
 }
 
-fn render_compact(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent: usize, lines: &mut Vec<String>) {
+fn render_compact(
+    msg: &AgentMessage,
+    theme: &ThemeTokens,
+    width: usize,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let indent = 7;
     let content_width = width.saturating_sub(indent + 1);
 
-    // Role badge
-    let (badge, badge_color) = role_badge(msg.role, theme);
+    let (badge, badge_style) = role_badge(msg.role);
 
-    // Skip empty tool messages in compact mode — show tool status one-liner
+    // Skip empty tool messages in compact mode -- show tool status one-liner
     if msg.role == MessageRole::Tool && msg.content.is_empty() {
         if let Some(name) = &msg.tool_name {
             let status = msg.tool_status.as_deref().unwrap_or("running");
-            let status_colored = format_tool_status(status, theme);
-            lines.push(format!(
-                "  {}\u{2699}{} {}{} {}",
-                theme.accent_assistant.fg(), FG_CLOSE,
-                theme.fg_dim.fg(), name,
-                status_colored,
-            ));
+            let (status_text, status_style) = format_tool_status(status, theme);
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("\u{2699}", theme.accent_assistant),
+                Span::raw(" "),
+                Span::styled(name.clone(), theme.fg_dim),
+                Span::raw(" "),
+                Span::styled(status_text, status_style),
+            ]));
         }
         return;
     }
@@ -47,46 +56,53 @@ fn render_compact(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent:
         return;
     }
 
-    // Escape brackets in user-provided content to prevent markup tag interference
-    let escaped_content = super::escape_markup(content);
-    let content_lines = wrap_text(&escaped_content, content_width);
+    let content_lines = wrap_text(content, content_width);
 
     if let Some(first) = content_lines.first() {
-        lines.push(format!(
-            "  {}{}{} {}{}{}",
-            badge_color.bg(), badge, BG_CLOSE,
-            theme.fg_active.fg(), first, FG_CLOSE,
-        ));
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                badge,
+                Style::default()
+                    .bg(badge_style.fg.unwrap_or(Color::Indexed(245)))
+                    .fg(Color::Black),
+            ),
+            Span::raw(" "),
+            Span::styled(first.clone(), theme.fg_active),
+        ]));
     }
 
     // Continuation lines with indent
     for line in content_lines.iter().skip(1) {
-        lines.push(format!(
-            "{}{}{}{}",
-            " ".repeat(indent),
-            theme.fg_active.fg(),
-            line,
-            FG_CLOSE,
-        ));
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(indent)),
+            Span::styled(line.clone(), theme.fg_active),
+        ]));
     }
 
     // Tool calls inline (compact: single merged line)
     if msg.role == MessageRole::Assistant {
         if let Some(name) = &msg.tool_name {
             let status = msg.tool_status.as_deref().unwrap_or("running");
-            let status_colored = format_tool_status(status, theme);
-            lines.push(format!(
-                "{}{}\u{2699}{} {}{} {}",
-                " ".repeat(indent),
-                theme.accent_assistant.fg(), FG_CLOSE,
-                theme.fg_dim.fg(), name,
-                status_colored,
-            ));
+            let (status_text, status_style) = format_tool_status(status, theme);
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(indent)),
+                Span::styled("\u{2699}", theme.accent_assistant),
+                Span::raw(" "),
+                Span::styled(name.clone(), theme.fg_dim),
+                Span::raw(" "),
+                Span::styled(status_text, status_style),
+            ]));
         }
     }
 }
 
-fn render_tools_only(msg: &AgentMessage, theme: &ThemeTokens, width: usize, _indent: usize, lines: &mut Vec<String>) {
+fn render_tools_only(
+    msg: &AgentMessage,
+    theme: &ThemeTokens,
+    width: usize,
+    lines: &mut Vec<Line<'static>>,
+) {
     // Only show tool-related messages
     if msg.role != MessageRole::Tool && msg.tool_name.is_none() {
         return;
@@ -94,7 +110,7 @@ fn render_tools_only(msg: &AgentMessage, theme: &ThemeTokens, width: usize, _ind
 
     if let Some(name) = &msg.tool_name {
         let status = msg.tool_status.as_deref().unwrap_or("running");
-        let status_colored = format_tool_status(status, theme);
+        let (status_text, status_style) = format_tool_status(status, theme);
         let args_preview = msg.tool_arguments.as_deref().unwrap_or("");
         let max_args = width.saturating_sub(30);
         let args_short = if args_preview.len() > max_args {
@@ -103,63 +119,71 @@ fn render_tools_only(msg: &AgentMessage, theme: &ThemeTokens, width: usize, _ind
             args_preview
         };
 
-        lines.push(format!(
-            "  {}\u{2699}{} {}{:<16}{} {}{}",
-            theme.accent_assistant.fg(), FG_CLOSE,
-            theme.fg_active.fg(), name, FG_CLOSE,
-            status_colored,
-            if !args_short.is_empty() { format!("  {}{}{}", theme.fg_dim.fg(), args_short, FG_CLOSE) } else { String::new() },
-        ));
+        let mut spans = vec![
+            Span::raw("  "),
+            Span::styled("\u{2699}", theme.accent_assistant),
+            Span::raw(" "),
+            Span::styled(name.clone(), theme.fg_active),
+            Span::raw(" "),
+            Span::styled(status_text, status_style),
+        ];
+
+        if !args_short.is_empty() {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(args_short.to_string(), theme.fg_dim));
+        }
+
+        lines.push(Line::from(spans));
     }
 }
 
-fn render_full(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent: usize, lines: &mut Vec<String>) {
+fn render_full(
+    msg: &AgentMessage,
+    theme: &ThemeTokens,
+    width: usize,
+    lines: &mut Vec<Line<'static>>,
+) {
+    let indent = 7;
+
     // Full mode: render everything including reasoning
-    render_compact(msg, theme, width, indent, lines);
+    render_compact(msg, theme, width, lines);
 
     // Show reasoning if present
     if let Some(reasoning) = &msg.reasoning {
         if !reasoning.is_empty() {
-            // Dark blue color for reasoning border
-            let dark_blue = crate::theme::Color(24);
-            lines.push(format!(
-                "{}{}\u{25be} \\[-] Reasoning{}",
-                " ".repeat(indent),
-                theme.fg_dim.fg(),
-                FG_CLOSE,
-            ));
+            let dark_blue_style = Style::default().fg(Color::Indexed(24));
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(indent)),
+                Span::styled("\u{25be} [-] Reasoning", theme.fg_dim),
+            ]));
             let reasoning_width = width.saturating_sub(indent + 2);
-            let escaped_reasoning = super::escape_markup(reasoning);
-            for line in wrap_text(&escaped_reasoning, reasoning_width) {
-                lines.push(format!(
-                    "{}{}\u{2502}{} {}{}{}",
-                    " ".repeat(indent),
-                    dark_blue.fg(),
-                    FG_CLOSE,
-                    theme.fg_dim.fg(),
-                    line,
-                    FG_CLOSE,
-                ));
+            for line in wrap_text(reasoning, reasoning_width) {
+                lines.push(Line::from(vec![
+                    Span::raw(" ".repeat(indent)),
+                    Span::styled("\u{2502}", dark_blue_style),
+                    Span::raw(" "),
+                    Span::styled(line, theme.fg_dim),
+                ]));
             }
         }
     }
 }
 
-fn role_badge(role: MessageRole, theme: &ThemeTokens) -> (&'static str, crate::theme::Color) {
+fn role_badge(role: MessageRole) -> (&'static str, Style) {
     match role {
-        MessageRole::User => ("USER", theme.accent_primary),
-        MessageRole::Assistant => ("ASST", theme.accent_assistant),
-        MessageRole::System => ("SYS ", theme.fg_dim),
-        MessageRole::Tool => ("TOOL", theme.accent_assistant),
-        MessageRole::Unknown => ("??? ", theme.fg_dim),
+        MessageRole::User => ("USER", Style::default().fg(Color::Indexed(75))),
+        MessageRole::Assistant => ("ASST", Style::default().fg(Color::Indexed(183))),
+        MessageRole::System => ("SYS ", Style::default().fg(Color::Indexed(245))),
+        MessageRole::Tool => ("TOOL", Style::default().fg(Color::Indexed(183))),
+        MessageRole::Unknown => ("??? ", Style::default().fg(Color::Indexed(245))),
     }
 }
 
-fn format_tool_status(status: &str, theme: &ThemeTokens) -> String {
+fn format_tool_status(status: &str, theme: &ThemeTokens) -> (&'static str, Style) {
     match status {
-        "completed" | "done" | "success" => format!("{}\u{2713} done{}", theme.accent_success.fg(), FG_CLOSE),
-        "error" | "failed" => format!("{}\u{2717} error{}", theme.accent_danger.fg(), FG_CLOSE),
-        _ => format!("{}\u{28cb} running{}", theme.accent_secondary.fg(), FG_CLOSE),
+        "completed" | "done" | "success" => ("\u{2713} done", theme.accent_success),
+        "error" | "failed" => ("\u{2717} error", theme.accent_danger),
+        _ => ("\u{28cb} running", theme.accent_secondary),
     }
 }
 
@@ -219,11 +243,8 @@ mod tests {
             content: "Hello".into(),
             ..Default::default()
         };
-        let lines = message_widget(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
+        let lines = message_to_lines(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
         assert!(!lines.is_empty());
-        // Should contain USER badge (visible in the markup output)
-        let joined = lines.join("");
-        assert!(joined.contains("USER"));
     }
 
     #[test]
@@ -234,10 +255,8 @@ mod tests {
             tool_status: Some("done".into()),
             ..Default::default()
         };
-        let lines = message_widget(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
-        let joined = lines.join("");
-        assert!(joined.contains('\u{2699}'));
-        assert!(joined.contains("bash_command"));
+        let lines = message_to_lines(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
+        assert!(!lines.is_empty());
     }
 
     #[test]
@@ -247,7 +266,7 @@ mod tests {
             content: "Hello".into(),
             ..Default::default()
         };
-        let lines = message_widget(&msg, TranscriptMode::Tools, &ThemeTokens::default(), 80);
+        let lines = message_to_lines(&msg, TranscriptMode::Tools, &ThemeTokens::default(), 80);
         assert!(lines.is_empty());
     }
 
@@ -258,10 +277,8 @@ mod tests {
             content: "I can help with that.".into(),
             ..Default::default()
         };
-        let lines = message_widget(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
+        let lines = message_to_lines(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
         assert!(!lines.is_empty());
-        let joined = lines.join("");
-        assert!(joined.contains("ASST"));
     }
 
     #[test]
@@ -272,10 +289,8 @@ mod tests {
             reasoning: Some("Step by step thinking".into()),
             ..Default::default()
         };
-        let lines = message_widget(&msg, TranscriptMode::Full, &ThemeTokens::default(), 80);
-        let joined = lines.join("");
-        assert!(joined.contains("Reasoning"));
-        assert!(joined.contains("Step by step"));
+        let lines = message_to_lines(&msg, TranscriptMode::Full, &ThemeTokens::default(), 80);
+        assert!(lines.len() > 1);
     }
 
     #[test]

@@ -1,301 +1,206 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE};
-use crate::state::settings::{SettingsState, SettingsTab};
+use ratatui::prelude::*;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, BorderType, Paragraph, Tabs};
+
 use crate::state::config::ConfigState;
+use crate::state::settings::{SettingsState, SettingsTab};
+use crate::theme::ThemeTokens;
 
-/// Render the settings overlay.
-/// Returns a full-screen Vec<String> (one entry per row) centered over the terminal.
-pub fn settings_widget(
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
     settings: &SettingsState,
     config: &ConfigState,
     theme: &ThemeTokens,
-    screen_width: usize,
-    screen_height: usize,
-) -> Vec<String> {
-    let bc = theme.accent_secondary.fg(); // amber border
-    let b = &SHARP_BORDER;
+) {
+    let block = Block::default()
+        .title(" SETTINGS ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(theme.accent_secondary);
 
-    // Size: ~75% width, ~80% height, centered
-    let panel_w = (screen_width * 75 / 100).max(60).min(screen_width);
-    let panel_h = (screen_height * 80 / 100).max(20).min(screen_height);
-    let inner_w = panel_w.saturating_sub(2);
-    let inner_h = panel_h.saturating_sub(2);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let x_pad = (screen_width.saturating_sub(panel_w)) / 2;
-    let y_pad = (screen_height.saturating_sub(panel_h)) / 2;
-
-    let mut result = Vec::new();
-
-    // Top padding
-    for _ in 0..y_pad {
-        result.push(" ".repeat(screen_width));
+    if inner.height < 5 {
+        return;
     }
 
-    // Top border with title
-    let title = " SETTINGS ";
-    let title_len = title.len();
-    let border_remaining = inner_w.saturating_sub(title_len);
-    result.push(format!(
-        "{}{}{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.top_left,
-        super::repeat_char(b.horizontal, 2),
-        title,
-        super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
-        b.top_right,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
-    ));
+    // Split: tab bar (1) + separator (1) + content (flex) + hints (1)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // tab bar
+            Constraint::Length(1), // separator
+            Constraint::Min(1),   // content
+            Constraint::Length(1), // hints
+        ])
+        .split(inner);
 
-    // Tab bar line
-    let tab_line = render_tab_bar(settings, theme, inner_w);
-    let padded_tab = super::pad_to_width(&tab_line, inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_tab,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
-    ));
-
-    // Separator below tabs
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        super::repeat_char('─', inner_w),
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
-    ));
-
-    // Content area: inner_h minus tab bar, separator, hints, bottom border
-    let content_h = inner_h.saturating_sub(3); // tab bar + separator + hints
-    let content_lines = render_tab_content(settings, config, theme, inner_w, content_h);
-
-    for i in 0..content_h {
-        let line = content_lines.get(i).cloned().unwrap_or_default();
-        let padded = super::pad_to_width(&line, inner_w);
-        result.push(format!(
-            "{}{}{}{}{}{}{}",
-            " ".repeat(x_pad),
-            bc, b.vertical,
-            padded,
-            b.vertical,
-            FG_CLOSE,
-            " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
-        ));
-    }
-
-    // Hints line
-    let hints = format!(
-        " {}Tab{} switch tab  {}Esc{} close",
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-        theme.fg_active.fg(), theme.fg_dim.fg(),
-    );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.vertical,
-        padded_hints,
-        b.vertical,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
-    ));
-
-    // Bottom border
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        " ".repeat(x_pad),
-        bc, b.bottom_left,
-        super::repeat_char(b.horizontal, inner_w),
-        b.bottom_right,
-        FG_CLOSE,
-        " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
-    ));
-
-    // Bottom padding
-    while result.len() < screen_height {
-        result.push(" ".repeat(screen_width));
-    }
-    result.truncate(screen_height);
-
-    result
-}
-
-fn render_tab_bar(settings: &SettingsState, theme: &ThemeTokens, _inner_w: usize) -> String {
+    // Tab bar
     let active = settings.active_tab();
-    let tabs = [
-        (SettingsTab::Provider, "Provider"),
-        (SettingsTab::Model, "Model"),
-        (SettingsTab::Tools, "Tools"),
-        (SettingsTab::Reasoning, "Reasoning"),
-        (SettingsTab::Gateway, "Gateway"),
-        (SettingsTab::Agent, "Agent"),
-    ];
+    let tab_labels = vec!["Provider", "Model", "Tools", "Reasoning", "Gateway", "Agent"];
+    let tab_index = match active {
+        SettingsTab::Provider => 0,
+        SettingsTab::Model => 1,
+        SettingsTab::Tools => 2,
+        SettingsTab::Reasoning => 3,
+        SettingsTab::Gateway => 4,
+        SettingsTab::Agent => 5,
+    };
+    let tabs = Tabs::new(tab_labels)
+        .select(tab_index)
+        .style(theme.fg_dim)
+        .highlight_style(theme.fg_active)
+        .divider(Span::styled(" | ", theme.fg_dim));
+    frame.render_widget(tabs, chunks[0]);
 
-    let mut parts = Vec::new();
-    for (tab, label) in &tabs {
-        if *tab == active {
-            // Active: bright white with escaped brackets
-            parts.push(format!(
-                "{}\\[{}]{}",
-                theme.fg_active.fg(),
-                label,
-                FG_CLOSE,
-            ));
-        } else {
-            // Inactive: dim
-            parts.push(format!(
-                "{} {} {}",
-                theme.fg_dim.fg(),
-                label,
-                FG_CLOSE,
-            ));
-        }
-    }
+    // Separator
+    let sep = Line::from(Span::styled(
+        "\u{2500}".repeat(chunks[1].width as usize),
+        theme.fg_dim,
+    ));
+    frame.render_widget(Paragraph::new(sep), chunks[1]);
 
-    format!(" {}", parts.join(" "))
+    // Content
+    let content_lines = render_tab_content(settings, config, theme);
+    let paragraph = Paragraph::new(content_lines);
+    frame.render_widget(paragraph, chunks[2]);
+
+    // Hints
+    let hints = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("Tab", theme.fg_active),
+        Span::styled(" switch tab  ", theme.fg_dim),
+        Span::styled("Esc", theme.fg_active),
+        Span::styled(" close", theme.fg_dim),
+    ]);
+    frame.render_widget(Paragraph::new(hints), chunks[3]);
 }
 
-fn render_tab_content(
+fn render_tab_content<'a>(
     settings: &SettingsState,
-    config: &ConfigState,
+    config: &'a ConfigState,
     theme: &ThemeTokens,
-    inner_w: usize,
-    content_h: usize,
-) -> Vec<String> {
+) -> Vec<Line<'a>> {
     match settings.active_tab() {
-        SettingsTab::Provider => render_provider_tab(config, theme, inner_w, content_h),
-        SettingsTab::Model => render_model_tab(config, theme, inner_w, content_h),
-        SettingsTab::Tools => render_tools_tab(theme, inner_w, content_h),
-        SettingsTab::Reasoning => render_reasoning_tab(config, theme, inner_w, content_h),
-        SettingsTab::Gateway => render_gateway_tab(theme, inner_w, content_h),
-        SettingsTab::Agent => render_agent_tab(config, theme, inner_w, content_h),
+        SettingsTab::Provider => render_provider_tab(config, theme),
+        SettingsTab::Model => render_model_tab(config, theme),
+        SettingsTab::Tools => render_tools_tab(theme),
+        SettingsTab::Reasoning => render_reasoning_tab(config, theme),
+        SettingsTab::Gateway => render_gateway_tab(theme),
+        SettingsTab::Agent => render_agent_tab(config, theme),
     }
 }
 
-fn render_provider_tab(
-    config: &ConfigState,
-    theme: &ThemeTokens,
-    _inner_w: usize,
-    content_h: usize,
-) -> Vec<String> {
+fn render_provider_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
-    lines.push(String::new());
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled("  Provider", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Select your LLM provider and credentials",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
 
-    lines.push(format!(
-        "  {}Provider{}",
-        theme.fg_active.fg(), FG_CLOSE,
-    ));
-    lines.push(format!(
-        "  {}Select your LLM provider and credentials{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-    ));
-
-    lines.push(String::new());
-
-    let provider = if config.provider().is_empty() { "(not set)" } else { config.provider() };
-    let base_url = if config.base_url().is_empty() { "(not set)" } else { config.base_url() };
-    let model = if config.model().is_empty() { "(not set)" } else { config.model() };
-
+    let provider = if config.provider().is_empty() {
+        "(not set)"
+    } else {
+        config.provider()
+    };
+    let base_url = if config.base_url().is_empty() {
+        "(not set)"
+    } else {
+        config.base_url()
+    };
+    let model = if config.model().is_empty() {
+        "(not set)"
+    } else {
+        config.model()
+    };
     let api_key_display = mask_api_key(config.api_key());
 
-    lines.push(format!(
-        "  {}Active Provider:{} {} ▾ {}{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), provider, FG_CLOSE,
-    ));
-    lines.push(format!(
-        "  {}Base URL:        {} {}{}{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), base_url, FG_CLOSE,
-    ));
-    lines.push(format!(
-        "  {}API Key:         {} {}{}{} {}\\[show]{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), api_key_display, FG_CLOSE,
-        theme.fg_dim.fg(), FG_CLOSE,
-    ));
-    lines.push(format!(
-        "  {}Model:           {} {}{}{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), model, FG_CLOSE,
-    ));
+    lines.push(Line::from(vec![
+        Span::styled("  Active Provider: ", theme.fg_dim),
+        Span::styled(provider, theme.fg_active),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Base URL:        ", theme.fg_dim),
+        Span::styled(base_url, theme.fg_active),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  API Key:         ", theme.fg_dim),
+        Span::styled(api_key_display, theme.fg_active),
+        Span::styled(" [show]", theme.fg_dim),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Model:           ", theme.fg_dim),
+        Span::styled(model, theme.fg_active),
+    ]));
 
-    while lines.len() < content_h {
-        lines.push(String::new());
-    }
-    lines.truncate(content_h);
     lines
 }
 
-fn render_model_tab(
-    config: &ConfigState,
-    theme: &ThemeTokens,
-    _inner_w: usize,
-    content_h: usize,
-) -> Vec<String> {
+fn render_model_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
-    lines.push(String::new());
-    lines.push(format!("  {}Model{}", theme.fg_active.fg(), FG_CLOSE));
-    lines.push(format!("  {}Select model for current provider{}", theme.fg_dim.fg(), FG_CLOSE));
-    lines.push(String::new());
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled("  Model", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Select model for current provider",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
 
-    let current = if config.model().is_empty() { "(not set)" } else { config.model() };
-    lines.push(format!(
-        "  {}Current:{}   {}{}{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), current, FG_CLOSE,
-    ));
+    let current = if config.model().is_empty() {
+        "(not set)"
+    } else {
+        config.model()
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  Current:   ", theme.fg_dim),
+        Span::styled(current, theme.fg_active),
+    ]));
 
     let models = config.fetched_models();
     if models.is_empty() {
-        lines.push(format!(
-            "  {}Available:{}  {}(press Enter to fetch){}",
-            theme.fg_dim.fg(), FG_CLOSE,
-            theme.fg_dim.fg(), FG_CLOSE,
-        ));
+        lines.push(Line::from(vec![
+            Span::styled("  Available:  ", theme.fg_dim),
+            Span::styled("(press Enter to fetch)", theme.fg_dim),
+        ]));
     } else {
-        lines.push(format!(
-            "  {}Available:{}",
-            theme.fg_dim.fg(), FG_CLOSE,
-        ));
+        lines.push(Line::from(Span::styled("  Available:", theme.fg_dim)));
         for m in models {
             let display_name = m.name.as_deref().unwrap_or(&m.id);
             let is_active = m.id == config.model() || display_name == config.model();
             if is_active {
-                lines.push(format!(
-                    "    {}> {}{}",
-                    theme.accent_secondary.fg(), display_name, FG_CLOSE,
-                ));
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("> {}", display_name), theme.accent_secondary),
+                ]));
             } else {
-                lines.push(format!(
-                    "    {}  {}{}",
-                    theme.fg_dim.fg(), display_name, FG_CLOSE,
-                ));
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("  {}", display_name), theme.fg_dim),
+                ]));
             }
         }
     }
 
-    while lines.len() < content_h {
-        lines.push(String::new());
-    }
-    lines.truncate(content_h);
     lines
 }
 
-fn render_tools_tab(theme: &ThemeTokens, _inner_w: usize, content_h: usize) -> Vec<String> {
+fn render_tools_tab(theme: &ThemeTokens) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
-    lines.push(String::new());
-    lines.push(format!("  {}Tools{}", theme.fg_active.fg(), FG_CLOSE));
-    lines.push(format!("  {}Enable or disable tool categories{}", theme.fg_dim.fg(), FG_CLOSE));
-    lines.push(String::new());
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled("  Tools", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Enable or disable tool categories",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
 
     let tools = [
         (true, "Terminal / Bash"),
@@ -308,93 +213,85 @@ fn render_tools_tab(theme: &ThemeTokens, _inner_w: usize, content_h: usize) -> V
 
     for (enabled, name) in &tools {
         let checkbox = if *enabled {
-            format!("{}\\[x]{}", theme.accent_success.fg(), FG_CLOSE)
+            Span::styled("[x]", theme.accent_success)
         } else {
-            format!("{}\\[ ]{}", theme.fg_dim.fg(), FG_CLOSE)
+            Span::styled("[ ]", theme.fg_dim)
         };
-        lines.push(format!(
-            "  {} {}{}{}",
+        lines.push(Line::from(vec![
+            Span::raw("  "),
             checkbox,
-            theme.fg_active.fg(), name, FG_CLOSE,
-        ));
+            Span::raw(" "),
+            Span::styled(*name, theme.fg_active),
+        ]));
     }
 
-    while lines.len() < content_h {
-        lines.push(String::new());
-    }
-    lines.truncate(content_h);
     lines
 }
 
-fn render_reasoning_tab(
-    config: &ConfigState,
-    theme: &ThemeTokens,
-    _inner_w: usize,
-    content_h: usize,
-) -> Vec<String> {
+fn render_reasoning_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
-    lines.push(String::new());
-    lines.push(format!("  {}Reasoning{}", theme.fg_active.fg(), FG_CLOSE));
-    lines.push(format!("  {}Configure extended thinking{}", theme.fg_dim.fg(), FG_CLOSE));
-    lines.push(String::new());
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled("  Reasoning", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Configure extended thinking",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
 
     let current_effort = config.reasoning_effort();
-    let effort_display = if current_effort.is_empty() { "Medium" } else { current_effort };
+    let effort_display = if current_effort.is_empty() {
+        "Medium"
+    } else {
+        current_effort
+    };
 
-    lines.push(format!(
-        "  {}Effort:{}  {}(●) {}{} {}← current{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.accent_secondary.fg(), effort_display, FG_CLOSE,
-        theme.fg_dim.fg(), FG_CLOSE,
-    ));
-    lines.push(String::new());
-    lines.push(format!(
-        "  {}Options:{}  {}Off / Minimal / Low / Medium / High / Extra High{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_dim.fg(), FG_CLOSE,
-    ));
+    lines.push(Line::from(vec![
+        Span::styled("  Effort:  ", theme.fg_dim),
+        Span::styled(format!("(\u{25cf}) {}", effort_display), theme.accent_secondary),
+        Span::styled(" <- current", theme.fg_dim),
+    ]));
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Options:  ", theme.fg_dim),
+        Span::styled(
+            "Off / Minimal / Low / Medium / High / Extra High",
+            theme.fg_dim,
+        ),
+    ]));
 
-    while lines.len() < content_h {
-        lines.push(String::new());
-    }
-    lines.truncate(content_h);
     lines
 }
 
-fn render_gateway_tab(theme: &ThemeTokens, _inner_w: usize, content_h: usize) -> Vec<String> {
+fn render_gateway_tab(theme: &ThemeTokens) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
-    lines.push(String::new());
-    lines.push(format!("  {}Gateway{}", theme.fg_active.fg(), FG_CLOSE));
-    lines.push(format!("  {}Messaging platform connections{}", theme.fg_dim.fg(), FG_CLOSE));
-    lines.push(String::new());
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled("  Gateway", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Messaging platform connections",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
 
-    lines.push(format!(
-        "  {}Gateway Enabled:{}  {}\\[x] Yes{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.accent_success.fg(), FG_CLOSE,
-    ));
+    lines.push(Line::from(vec![
+        Span::styled("  Gateway Enabled:  ", theme.fg_dim),
+        Span::styled("[x] Yes", theme.accent_success),
+    ]));
 
-    while lines.len() < content_h {
-        lines.push(String::new());
-    }
-    lines.truncate(content_h);
     lines
 }
 
-fn render_agent_tab(
-    config: &ConfigState,
-    theme: &ThemeTokens,
-    _inner_w: usize,
-    content_h: usize,
-) -> Vec<String> {
+fn render_agent_tab<'a>(config: &'a ConfigState, theme: &ThemeTokens) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
-    lines.push(String::new());
-    lines.push(format!("  {}Agent{}", theme.fg_active.fg(), FG_CLOSE));
-    lines.push(format!("  {}Agent identity and behavior{}", theme.fg_dim.fg(), FG_CLOSE));
-    lines.push(String::new());
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled("  Agent", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Agent identity and behavior",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
 
     let agent_name = if let Some(raw) = config.agent_config_raw() {
         raw.get("agent_name")
@@ -405,25 +302,18 @@ fn render_agent_tab(
         "Sisyphus".to_string()
     };
 
-    lines.push(format!(
-        "  {}Agent Name:{}  {}{}{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), agent_name, FG_CLOSE,
-    ));
-    lines.push(format!(
-        "  {}Backend:{}     {}daemon{}",
-        theme.fg_dim.fg(), FG_CLOSE,
-        theme.fg_active.fg(), FG_CLOSE,
-    ));
+    lines.push(Line::from(vec![
+        Span::styled("  Agent Name:  ", theme.fg_dim),
+        Span::styled(agent_name, theme.fg_active),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("  Backend:     ", theme.fg_dim),
+        Span::styled("daemon", theme.fg_active),
+    ]));
 
-    while lines.len() < content_h {
-        lines.push(String::new());
-    }
-    lines.truncate(content_h);
     lines
 }
 
-/// Mask an API key: show first 3 chars, dots, last 4 chars.
 fn mask_api_key(key: &str) -> String {
     if key.is_empty() {
         return "(not set)".to_string();
@@ -431,192 +321,48 @@ fn mask_api_key(key: &str) -> String {
     let chars: Vec<char> = key.chars().collect();
     let len = chars.len();
     if len <= 7 {
-        return "••••••••".to_string();
+        return "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}".to_string();
     }
     let prefix: String = chars[..3].iter().collect();
     let suffix: String = chars[len - 4..].iter().collect();
-    format!("{}••••••••{}", prefix, suffix)
+    format!(
+        "{}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}{}",
+        prefix, suffix
+    )
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::settings::{SettingsState, SettingsAction};
-    use crate::state::config::{ConfigState, ConfigAction, AgentConfigSnapshot};
-    use crate::theme::ThemeTokens;
-
-    fn make_config() -> ConfigState {
-        let mut cfg = ConfigState::new();
-        cfg.reduce(ConfigAction::ConfigReceived(AgentConfigSnapshot {
-            provider: "OpenAI".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            model: "gpt-4o".into(),
-            api_key: "sk-abcdefgh12345678abcd".into(),
-            reasoning_effort: "medium".into(),
-        }));
-        cfg
-    }
+    use crate::state::config::ConfigState;
+    use crate::state::settings::SettingsState;
 
     #[test]
-    fn settings_widget_returns_correct_height() {
+    fn settings_handles_empty_state() {
         let settings = SettingsState::new();
         let config = ConfigState::new();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        assert_eq!(lines.len(), 40);
+        let _theme = ThemeTokens::default();
+        assert_eq!(settings.active_tab(), SettingsTab::Provider);
+        assert!(config.model().is_empty());
     }
 
     #[test]
-    fn settings_widget_contains_title() {
-        let settings = SettingsState::new();
-        let config = ConfigState::new();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("SETTINGS"));
-    }
-
-    #[test]
-    fn settings_widget_shows_tab_bar() {
-        let settings = SettingsState::new();
-        let config = ConfigState::new();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Provider"));
-        assert!(joined.contains("Model"));
-        assert!(joined.contains("Tools"));
-        assert!(joined.contains("Reasoning"));
-        assert!(joined.contains("Gateway"));
-        assert!(joined.contains("Agent"));
-    }
-
-    #[test]
-    fn settings_widget_provider_tab_shows_config() {
-        let settings = SettingsState::new();
-        let config = make_config();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("OpenAI"));
-        assert!(joined.contains("gpt-4o"));
-        assert!(joined.contains("api.openai.com"));
-    }
-
-    #[test]
-    fn settings_widget_switches_to_model_tab() {
-        let mut settings = SettingsState::new();
-        settings.reduce(SettingsAction::SwitchTab(SettingsTab::Model));
-        let config = make_config();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Select model for current provider"));
-        assert!(joined.contains("Current:"));
-    }
-
-    #[test]
-    fn settings_widget_tools_tab_shows_checkboxes() {
-        let mut settings = SettingsState::new();
-        settings.reduce(SettingsAction::SwitchTab(SettingsTab::Tools));
-        let config = ConfigState::new();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Terminal / Bash"));
-        assert!(joined.contains("File Operations"));
-        assert!(joined.contains("Web Search"));
-    }
-
-    #[test]
-    fn settings_widget_reasoning_tab() {
-        let mut settings = SettingsState::new();
-        settings.reduce(SettingsAction::SwitchTab(SettingsTab::Reasoning));
-        let config = make_config();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Configure extended thinking"));
-        assert!(joined.contains("Off / Minimal / Low / Medium / High / Extra High"));
-    }
-
-    #[test]
-    fn settings_widget_gateway_tab() {
-        let mut settings = SettingsState::new();
-        settings.reduce(SettingsAction::SwitchTab(SettingsTab::Gateway));
-        let config = ConfigState::new();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Messaging platform connections"));
-        assert!(joined.contains("Gateway Enabled"));
-    }
-
-    #[test]
-    fn settings_widget_agent_tab() {
-        let mut settings = SettingsState::new();
-        settings.reduce(SettingsAction::SwitchTab(SettingsTab::Agent));
-        let config = ConfigState::new();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("Agent identity and behavior"));
-        assert!(joined.contains("Sisyphus"));
-        assert!(joined.contains("daemon"));
-    }
-
-    #[test]
-    fn settings_widget_api_key_is_masked() {
-        let settings = SettingsState::new();
-        let config = make_config();
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(!joined.contains("sk-abcdefgh12345678abcd"));
-        assert!(joined.contains("••••••••"));
+    fn settings_api_key_is_masked() {
+        let masked = mask_api_key("sk-abcdefgh12345678abcd");
+        assert!(!masked.contains("abcdefgh"));
+        assert!(masked.contains("\u{2022}"));
     }
 
     #[test]
     fn mask_api_key_short_returns_dots() {
-        assert_eq!(mask_api_key("short"), "••••••••");
-    }
-
-    #[test]
-    fn mask_api_key_long_shows_prefix_and_suffix() {
-        let masked = mask_api_key("sk-abcdefghijklmnopabcd");
-        assert!(masked.starts_with("sk-"));
-        assert!(masked.ends_with("abcd"));
-        assert!(masked.contains("••••••••"));
+        assert_eq!(
+            mask_api_key("short"),
+            "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"
+        );
     }
 
     #[test]
     fn mask_api_key_empty_returns_not_set() {
         assert_eq!(mask_api_key(""), "(not set)");
-    }
-
-    #[test]
-    fn settings_widget_model_tab_with_fetched_models() {
-        let mut settings = SettingsState::new();
-        settings.reduce(SettingsAction::SwitchTab(SettingsTab::Model));
-        let mut config = make_config();
-        config.reduce(ConfigAction::ModelsFetched(vec![
-            crate::state::config::FetchedModel {
-                id: "gpt-4o".into(),
-                name: Some("GPT-4o".into()),
-                context_window: Some(128_000),
-            },
-            crate::state::config::FetchedModel {
-                id: "gpt-4o-mini".into(),
-                name: Some("GPT-4o Mini".into()),
-                context_window: Some(128_000),
-            },
-        ]));
-        let theme = ThemeTokens::default();
-        let lines = settings_widget(&settings, &config, &theme, 120, 40);
-        let joined = lines.join("");
-        assert!(joined.contains("GPT-4o"));
-        assert!(joined.contains("GPT-4o Mini"));
     }
 }

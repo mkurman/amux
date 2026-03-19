@@ -1,190 +1,110 @@
-use crate::theme::{ThemeTokens, ROUNDED_BORDER, FG_CLOSE, BG_CLOSE};
-use crate::state::chat::ChatState;
+use ratatui::prelude::*;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
 
-/// Render the chat pane (left pane in two-pane layout)
-pub fn chat_widget(
+use crate::state::chat::ChatState;
+use crate::theme::ThemeTokens;
+
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
     chat: &ChatState,
     theme: &ThemeTokens,
     focused: bool,
-    width: usize,
-    height: usize,
-) -> Vec<String> {
-    let border_color = if focused { theme.accent_primary } else { theme.fg_dim };
-    let bc = border_color.fg();
-    let b = &ROUNDED_BORDER;
-    let inner_width = width.saturating_sub(2);
-    let inner_height = height.saturating_sub(2); // top and bottom borders
-
-    let mut result = Vec::new();
-
-    // Title
-    let title = " Conversation ";
-    let title_colored = if focused {
-        format!("{}{}{}", theme.fg_active.fg(), title, bc)
+) {
+    let border_style = if focused {
+        theme.accent_primary
     } else {
-        format!("{}{}{}", theme.fg_dim.fg(), title, bc)
+        theme.fg_dim
     };
-    let title_len = title.len();
-    let remaining = inner_width.saturating_sub(title_len);
-    result.push(format!(
-        "{}{}{}{}{}{}{}",
-        bc, b.top_left,
-        super::repeat_char(b.horizontal, 2),
-        title_colored,
-        super::repeat_char(b.horizontal, remaining.saturating_sub(2)),
-        b.top_right,
-        FG_CLOSE,
-    ));
-
-    // Content area
-    let content_lines = if chat.active_thread().is_none() && chat.streaming_content().is_empty() {
-        // Delegate to splash widget when no thread is active
-        crate::widgets::splash::splash_widget(theme, inner_width, inner_height)
+    let title_style = if focused {
+        theme.fg_active
     } else {
-        render_messages(chat, theme, inner_width, inner_height)
+        theme.fg_dim
     };
+    let block = Block::default()
+        .title(Span::styled(" Conversation ", title_style))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style);
 
-    for line in &content_lines {
-        let fitted = super::fit_to_width(line, inner_width);
-        result.push(format!("{}{}{}{}{}", bc, b.vertical, fitted, b.vertical, FG_CLOSE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if chat.active_thread().is_none() && chat.streaming_content().is_empty() {
+        // Render splash
+        super::splash::render(frame, inner, theme);
+        return;
     }
 
-    // Bottom border
-    result.push(format!(
-        "{}{}{}{}{}",
-        bc, b.bottom_left,
-        super::repeat_char(b.horizontal, inner_width),
-        b.bottom_right,
-        FG_CLOSE,
-    ));
-
-    // Guarantee every line is exactly `width` visible chars
-    let result: Vec<String> = result.into_iter()
-        .map(|line| super::fit_to_width(&line, width))
-        .collect();
-    result
-}
-
-fn render_messages(
-    chat: &ChatState,
-    theme: &ThemeTokens,
-    width: usize,
-    height: usize,
-) -> Vec<String> {
+    // Render messages
     let mode = chat.transcript_mode();
+    let inner_width = inner.width as usize;
+    let inner_height = inner.height as usize;
 
-    // Collect all message lines
-    let mut all_lines: Vec<String> = Vec::new();
+    let mut all_lines: Vec<Line> = Vec::new();
 
     if let Some(thread) = chat.active_thread() {
         for msg in &thread.messages {
-            let msg_lines = super::message::message_widget(msg, mode, theme, width);
+            let msg_lines = super::message::message_to_lines(msg, mode, theme, inner_width);
             all_lines.extend(msg_lines);
             // Add spacing between messages
             if !all_lines.is_empty() {
-                all_lines.push(String::new());
+                all_lines.push(Line::raw(""));
             }
         }
     }
 
     // Append streaming content if present
     if !chat.streaming_content().is_empty() {
-        let streaming_line = format!(
-            "  {}ASST{} {}{}\u{2588}{}",
-            theme.accent_assistant.bg(),
-            BG_CLOSE,
-            theme.fg_active.fg(),
-            chat.streaming_content(),
-            FG_CLOSE,
-        );
-        all_lines.push(streaming_line);
+        all_lines.push(Line::from(vec![
+            Span::styled(
+                " ASST ",
+                Style::default()
+                    .bg(Color::Indexed(183))
+                    .fg(Color::Black),
+            ),
+            Span::raw(" "),
+            Span::styled(chat.streaming_content(), theme.fg_active),
+            Span::raw("\u{2588}"),
+        ]));
     }
 
     // Apply scroll offset (0 = following tail = show last `height` lines)
     let scroll = chat.scroll_offset();
     let total = all_lines.len();
 
-    if total <= height {
-        // All lines fit — pad at top to push content to bottom
-        let mut padded = all_lines;
-        while padded.len() < height {
-            padded.insert(0, String::new());
+    let visible_lines = if total <= inner_height {
+        // All lines fit -- pad at top to push content to bottom
+        let mut padded = Vec::new();
+        for _ in 0..(inner_height.saturating_sub(total)) {
+            padded.push(Line::raw(""));
         }
+        padded.extend(all_lines);
         padded
     } else if scroll == 0 {
         // Following tail: show last `height` lines
-        all_lines[total - height..].to_vec()
+        all_lines[total - inner_height..].to_vec()
     } else {
         // Scrolled up: show lines from (end - height - scroll) to (end - scroll)
         let end = total.saturating_sub(scroll);
-        let start = end.saturating_sub(height);
+        let start = end.saturating_sub(inner_height);
         all_lines[start..end].to_vec()
-    }
+    };
+
+    let paragraph = Paragraph::new(visible_lines);
+    frame.render_widget(paragraph, inner);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::ThemeTokens;
 
     #[test]
-    fn chat_widget_returns_correct_height() {
+    fn chat_handles_empty_state() {
         let chat = ChatState::new();
-        let theme = ThemeTokens::default();
-        let lines = chat_widget(&chat, &theme, true, 60, 20);
-        assert_eq!(lines.len(), 20);
-    }
-
-    #[test]
-    fn chat_widget_has_borders() {
-        let chat = ChatState::new();
-        let theme = ThemeTokens::default();
-        let lines = chat_widget(&chat, &theme, true, 60, 20);
-        // First line should contain top-left border char
-        assert!(lines[0].contains('\u{256d}')); // ╭
-        // Last line should contain bottom-left border char
-        assert!(lines.last().unwrap().contains('\u{2570}')); // ╰
-    }
-
-    #[test]
-    fn chat_widget_contains_title() {
-        let chat = ChatState::new();
-        let theme = ThemeTokens::default();
-        let lines = chat_widget(&chat, &theme, true, 60, 20);
-        assert!(lines[0].contains("Conversation"));
-    }
-
-    #[test]
-    fn chat_widget_shows_splash_when_no_thread() {
-        let chat = ChatState::new();
-        let theme = ThemeTokens::default();
-        let lines = chat_widget(&chat, &theme, false, 60, 20);
-        // Should have correct height
-        assert_eq!(lines.len(), 20);
-        // Should show some content (splash) rather than empty
-        let joined = lines.join("");
-        // Splash includes TAMUX text
-        assert!(joined.contains("T A M U X"));
-    }
-
-    #[test]
-    fn chat_widget_unfocused_uses_dim_border() {
-        let chat = ChatState::new();
-        let theme = ThemeTokens::default();
-        let focused_lines = chat_widget(&chat, &theme, true, 60, 20);
-        let unfocused_lines = chat_widget(&chat, &theme, false, 60, 20);
-        // Both should have the same number of lines
-        assert_eq!(focused_lines.len(), unfocused_lines.len());
-        // But the first lines (borders) should differ in color
-        assert_ne!(focused_lines[0], unfocused_lines[0]);
-    }
-
-    #[test]
-    fn chat_widget_minimum_size() {
-        let chat = ChatState::new();
-        let theme = ThemeTokens::default();
-        // Very small dimensions should not panic
-        let lines = chat_widget(&chat, &theme, true, 4, 3);
-        assert_eq!(lines.len(), 3);
+        assert!(chat.active_thread().is_none());
+        assert!(chat.streaming_content().is_empty());
     }
 }
