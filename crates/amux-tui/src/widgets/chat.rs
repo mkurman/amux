@@ -71,7 +71,11 @@ pub fn render(
                 .add_modifier(Modifier::empty());
             for line_idx in start..end {
                 if let Some(line) = all_lines.get_mut(line_idx) {
-                    // Prepend selection marker on first line, indent on continuation
+                    // Skip empty/whitespace-only lines
+                    let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                    if plain.trim().is_empty() {
+                        continue;
+                    }
                     if line_idx == start {
                         let mut new_spans = vec![Span::styled("> ", Style::default().fg(Color::Indexed(178)))];
                         new_spans.extend(line.spans.iter().cloned());

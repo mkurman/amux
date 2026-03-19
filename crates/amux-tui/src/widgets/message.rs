@@ -110,35 +110,54 @@ fn render_compact(
     }
 
     let content = &msg.content;
-    if content.is_empty() {
+    // Skip truly empty non-assistant messages (no content, no reasoning)
+    if content.is_empty() && msg.role != MessageRole::Assistant {
+        return;
+    }
+    if content.is_empty() && msg.reasoning.is_none() {
         return;
     }
 
     let (badge, badge_style) = role_badge(msg.role);
 
-    // For assistant messages: show reasoning BEFORE content
+    // Badge first — always show the role badge
+    let content_lines = wrap_text(content, content_width);
+    let first_content = content_lines.first().cloned().unwrap_or_default();
+
+    // Always show badge (even if content is empty — for reasoning-only messages)
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            badge,
+            Style::default()
+                .bg(badge_style.fg.unwrap_or(Color::Indexed(245)))
+                .fg(Color::Black),
+        ),
+        Span::raw(" "),
+        Span::styled(first_content, theme.fg_active),
+    ]));
+
+    // Reasoning block (after badge, before continuation content)
     if msg.role == MessageRole::Assistant {
         if let Some(reasoning) = &msg.reasoning {
             if !reasoning.is_empty() {
                 let is_expanded = expanded.contains(&msg_index);
                 if is_expanded {
-                    // Expanded reasoning
                     lines.push(Line::from(vec![
                         Span::raw(" ".repeat(indent)),
                         Span::styled("\u{25be} [-] Reasoning", theme.fg_dim),
                     ]));
                     let reasoning_width = width.saturating_sub(indent + 2);
                     let dark_blue = Style::default().fg(Color::Indexed(24));
-                    for line in wrap_text(reasoning, reasoning_width) {
+                    for rline in wrap_text(reasoning, reasoning_width) {
                         lines.push(Line::from(vec![
                             Span::raw(" ".repeat(indent)),
                             Span::styled("\u{2502}", dark_blue),
                             Span::raw(" "),
-                            Span::styled(line, theme.fg_dim),
+                            Span::styled(rline, theme.fg_dim),
                         ]));
                     }
                 } else {
-                    // Collapsed reasoning hint
                     lines.push(Line::from(vec![
                         Span::raw(" ".repeat(indent)),
                         Span::styled("\u{25b6} [+] Reasoning", theme.fg_dim),
@@ -148,24 +167,7 @@ fn render_compact(
         }
     }
 
-    // Badge + first line of content
-    let content_lines = wrap_text(content, content_width);
-
-    if let Some(first) = content_lines.first() {
-        lines.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                badge,
-                Style::default()
-                    .bg(badge_style.fg.unwrap_or(Color::Indexed(245)))
-                    .fg(Color::Black),
-            ),
-            Span::raw(" "),
-            Span::styled(first.clone(), theme.fg_active),
-        ]));
-    }
-
-    // Continuation lines
+    // Continuation content lines
     for line in content_lines.iter().skip(1) {
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(indent)),
@@ -368,10 +370,12 @@ mod tests {
             ..Default::default()
         };
         let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
-        // First line should be reasoning hint, then ASST badge
+        // First line = ASST badge, second line = reasoning hint
         assert!(lines.len() >= 2);
         let first_text: String = lines[0].spans.iter().map(|s| s.content.to_string()).collect();
-        assert!(first_text.contains("Reasoning"), "First line should be reasoning hint, got: {}", first_text);
+        assert!(first_text.contains("ASST"), "First line should have ASST badge, got: {}", first_text);
+        let second_text: String = lines[1].spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(second_text.contains("Reasoning"), "Second line should be reasoning hint, got: {}", second_text);
     }
 
     #[test]
