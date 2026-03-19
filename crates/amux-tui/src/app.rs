@@ -129,17 +129,28 @@ impl TuiModel {
             "model": &self.config.model,
             "reasoning_effort": &self.config.reasoning_effort,
             "tools": {
-                "bash": true,
-                "file_operations": true,
-                "web_search": true,
-                "web_browse": false,
-                "vision": false,
-                "system_info": true,
-                "gateway_messaging": false,
-                // TUI-specific: disable frontend-only tools
+                "bash": self.config.tool_bash,
+                "file_operations": self.config.tool_file_ops,
+                "web_search": self.config.tool_web_search,
+                "web_browse": self.config.tool_web_browse,
+                "vision": self.config.tool_vision,
+                "system_info": self.config.tool_system_info,
+                "gateway_messaging": self.config.tool_gateway,
+                // TUI-specific: always disable frontend-only tools
                 "workspace": false,
                 "terminal_management": false,
                 "managed_commands": false,
+            },
+            "search_provider": &self.config.search_provider,
+            "firecrawl_api_key": &self.config.firecrawl_api_key,
+            "exa_api_key": &self.config.exa_api_key,
+            "tavily_api_key": &self.config.tavily_api_key,
+            "gateway": {
+                "enabled": self.config.gateway_enabled,
+                "slack_token": &self.config.slack_token,
+                "telegram_token": &self.config.telegram_token,
+                "discord_token": &self.config.discord_token,
+                "command_prefix": &self.config.gateway_prefix,
             },
         })) {
             self.send_daemon_command(DaemonCommand::SetConfigJson(json));
@@ -192,6 +203,36 @@ impl TuiModel {
             }
             if !api_key.is_empty() {
                 self.config.api_key = api_key.to_string();
+            }
+        }
+
+        // Load tool toggles from agent settings
+        let get_bool = |key: &str| json.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+        let get_str = |key: &str| json.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        self.config.tool_bash = json.get("enableBashTool").and_then(|v| v.as_bool()).unwrap_or(true);
+        self.config.tool_web_search = get_bool("enableWebSearchTool");
+        self.config.tool_web_browse = get_bool("enableWebBrowsingTool");
+        self.config.tool_vision = get_bool("enableVisionTool");
+
+        // Web search provider + keys
+        self.config.search_provider = get_str("searchToolProvider");
+        self.config.firecrawl_api_key = get_str("firecrawlApiKey");
+        self.config.exa_api_key = get_str("exaApiKey");
+        self.config.tavily_api_key = get_str("tavilyApiKey");
+
+        // Gateway config (from settings.json — different file)
+        let settings_path = format!("{}/.tamux/settings.json", home);
+        if let Ok(settings_data) = std::fs::read_to_string(&settings_path) {
+            if let Ok(settings_json) = serde_json::from_str::<serde_json::Value>(&settings_data) {
+                self.config.gateway_enabled = settings_json.get("gatewayEnabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                self.config.slack_token = settings_json.get("slackToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                self.config.telegram_token = settings_json.get("telegramToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                self.config.discord_token = settings_json.get("discordToken").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                self.config.gateway_prefix = settings_json.get("gatewayCommandPrefix").and_then(|v| v.as_str()).unwrap_or("!tamux").to_string();
+                if self.config.gateway_enabled {
+                    self.config.tool_gateway = true;
+                }
             }
         }
 

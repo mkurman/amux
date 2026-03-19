@@ -27,6 +27,7 @@ pub enum ConfigAction {
     SetProvider(String),
     SetModel(String),
     SetReasoningEffort(String),
+    ToggleTool(String), // toggle tool by name: "bash", "file_ops", "web_search", etc.
 }
 
 // ── ConfigState ───────────────────────────────────────────────────────────────
@@ -39,6 +40,28 @@ pub struct ConfigState {
     pub reasoning_effort: String,
     pub fetched_models: Vec<FetchedModel>,
     pub agent_config_raw: Option<serde_json::Value>,
+
+    // Tool toggles
+    pub tool_bash: bool,
+    pub tool_file_ops: bool,
+    pub tool_web_search: bool,
+    pub tool_web_browse: bool,
+    pub tool_vision: bool,
+    pub tool_system_info: bool,
+    pub tool_gateway: bool,
+
+    // Web search config
+    pub search_provider: String,    // "none", "firecrawl", "exa", "tavily"
+    pub firecrawl_api_key: String,
+    pub exa_api_key: String,
+    pub tavily_api_key: String,
+
+    // Gateway config
+    pub gateway_enabled: bool,
+    pub slack_token: String,
+    pub telegram_token: String,
+    pub discord_token: String,
+    pub gateway_prefix: String,
 }
 
 impl ConfigState {
@@ -51,6 +74,22 @@ impl ConfigState {
             reasoning_effort: String::new(),
             fetched_models: Vec::new(),
             agent_config_raw: None,
+            tool_bash: true,
+            tool_file_ops: true,
+            tool_web_search: true,
+            tool_web_browse: false,
+            tool_vision: false,
+            tool_system_info: true,
+            tool_gateway: false,
+            search_provider: "none".to_string(),
+            firecrawl_api_key: String::new(),
+            exa_api_key: String::new(),
+            tavily_api_key: String::new(),
+            gateway_enabled: false,
+            slack_token: String::new(),
+            telegram_token: String::new(),
+            discord_token: String::new(),
+            gateway_prefix: "!tamux".to_string(),
         }
     }
 
@@ -110,6 +149,18 @@ impl ConfigState {
 
             ConfigAction::SetReasoningEffort(effort) => {
                 self.reasoning_effort = effort;
+            }
+            ConfigAction::ToggleTool(name) => {
+                match name.as_str() {
+                    "bash" => self.tool_bash = !self.tool_bash,
+                    "file_ops" => self.tool_file_ops = !self.tool_file_ops,
+                    "web_search" => self.tool_web_search = !self.tool_web_search,
+                    "web_browse" => self.tool_web_browse = !self.tool_web_browse,
+                    "vision" => self.tool_vision = !self.tool_vision,
+                    "system_info" => self.tool_system_info = !self.tool_system_info,
+                    "gateway" => self.tool_gateway = !self.tool_gateway,
+                    _ => {}
+                }
             }
         }
     }
