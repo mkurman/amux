@@ -124,6 +124,6 @@ mod tests {
         let config = ConfigState::new();
         let _theme = ThemeTokens::default();
         assert_eq!(modal.picker_cursor(), 0);
-        assert!(config.provider().is_empty());
+        assert_eq!(config.provider(), "openai");
     }
 }
