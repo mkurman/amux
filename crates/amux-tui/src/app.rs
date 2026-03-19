@@ -592,21 +592,33 @@ impl StringModel for TuiModel {
     }
 
     fn view_string(&self) -> String {
-        // Minimal stub view -- will be replaced by widget rendering in Phase 1
         let mut lines = Vec::new();
         let w = self.width as usize;
 
-        // Header
-        let model_name = &self.config.model;
-        let status_icon = if self.connected { "+" } else { "o" };
-        let header = format!(
-            " TAMUX {} {} {}",
-            status_icon, model_name, self.status_line
+        // Header widget (3 lines)
+        let header_lines = crate::widgets::header::header_widget(
+            &self.config,
+            &self.chat,
+            &self.theme,
+            false,
+            w,
         );
-        lines.push(truncate_or_pad(&header, w));
+        // Footer widget (4 lines)
+        let footer_lines = crate::widgets::footer::footer_widget(
+            &self.input,
+            &self.theme,
+            self.focus.clone(),
+            self.focus == FocusArea::Input,
+            w,
+        );
+
+        for line in &header_lines {
+            lines.push(line.clone());
+        }
 
         // Body
-        let body_h = (self.height as usize).saturating_sub(3);
+        let body_h = (self.height as usize)
+            .saturating_sub(header_lines.len() + footer_lines.len());
         if self.chat.active_thread().is_none() {
             // Splash screen
             let pad_top = body_h / 3;
@@ -618,7 +630,7 @@ impl StringModel for TuiModel {
             lines.push(center_str("", w));
             lines.push(center_str("Type a prompt to begin", w));
             lines.push(center_str("Ctrl+P: commands  Ctrl+T: threads", w));
-            while lines.len() < body_h + 1 {
+            while lines.len() < header_lines.len() + body_h {
                 lines.push(" ".repeat(w));
             }
         } else {
@@ -651,20 +663,15 @@ impl StringModel for TuiModel {
                 ));
             }
             // Pad remaining
-            while lines.len() < body_h + 1 {
+            while lines.len() < header_lines.len() + body_h {
                 lines.push(" ".repeat(w));
             }
         }
 
-        // Footer
-        let mode_label = match self.input.mode() {
-            input::InputMode::Normal => "NORMAL",
-            input::InputMode::Insert => "INSERT",
-        };
-        let input_line = format!(" {} > {}", mode_label, self.input.buffer());
-        lines.push(truncate_or_pad(&input_line, w));
-        let hints = " tab:focus  ctrl+p:commands  ctrl+t:threads  /:slash  q:quit";
-        lines.push(truncate_or_pad(hints, w));
+        // Footer widget
+        for line in &footer_lines {
+            lines.push(line.clone());
+        }
 
         lines.join("\n")
     }
