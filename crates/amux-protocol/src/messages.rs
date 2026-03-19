@@ -686,19 +686,14 @@ pub enum ApprovalDecision {
 }
 
 /// Security policy level controlling approval strictness.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum SecurityLevel {
     Highest,
+    #[default]
     Moderate,
     Lowest,
     Yolo,
-}
-
-impl Default for SecurityLevel {
-    fn default() -> Self {
-        Self::Moderate
-    }
 }
 
 /// Request describing a managed command execution.

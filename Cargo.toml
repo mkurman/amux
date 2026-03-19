@@ -6,6 +6,7 @@ members = [
     "crates/amux-cli",
     "crates/amux-gateway",
     "crates/amux-mcp",
+    "crates/amux-tui",
 ]
 
 [workspace.package]
