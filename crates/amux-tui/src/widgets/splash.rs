@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, Color, RESET};
+use crate::theme::{ThemeTokens, Color, FG_CLOSE};
 
 /// Render the splash screen — centered logo + motto + hints.
 /// Returns lines that should be placed in the chat area when no thread is active.
@@ -31,17 +31,17 @@ pub fn splash_widget(theme: &ThemeTokens, width: usize, height: usize) -> Vec<St
         gradient_colors[2].fg(),
         gradient_colors[1].fg(),
         gradient_colors[0].fg(),
-        RESET,
+        FG_CLOSE,
     );
-    lines.push(center_ansi(&logo, width));
+    lines.push(center_markup(&logo, width));
 
     // Motto
     let motto = format!(
         "{}plan · solve · ship{}",
         theme.fg_dim.fg(),
-        RESET,
+        FG_CLOSE,
     );
-    lines.push(center_ansi(&motto, width));
+    lines.push(center_markup(&motto, width));
 
     // Empty line
     lines.push(" ".repeat(width));
@@ -50,27 +50,27 @@ pub fn splash_widget(theme: &ThemeTokens, width: usize, height: usize) -> Vec<St
     let hint1 = format!(
         "{}Type a prompt to begin, or{}",
         theme.fg_dim.fg(),
-        RESET,
+        FG_CLOSE,
     );
-    lines.push(center_ansi(&hint1, width));
+    lines.push(center_markup(&hint1, width));
 
     let hint2 = format!(
         "{}Ctrl+P{} {}to open command palette{}",
         theme.accent_primary.fg(),
-        RESET,
+        FG_CLOSE,
         theme.fg_dim.fg(),
-        RESET,
+        FG_CLOSE,
     );
-    lines.push(center_ansi(&hint2, width));
+    lines.push(center_markup(&hint2, width));
 
     let hint3 = format!(
         "{}Ctrl+T{} {}to pick a thread{}",
         theme.accent_primary.fg(),
-        RESET,
+        FG_CLOSE,
         theme.fg_dim.fg(),
-        RESET,
+        FG_CLOSE,
     );
-    lines.push(center_ansi(&hint3, width));
+    lines.push(center_markup(&hint3, width));
 
     // Pad remaining height
     while lines.len() < height {
@@ -82,9 +82,9 @@ pub fn splash_widget(theme: &ThemeTokens, width: usize, height: usize) -> Vec<St
     lines
 }
 
-/// Center a string containing ANSI escapes within a given width
-fn center_ansi(s: &str, width: usize) -> String {
-    let visible = super::strip_ansi_len(s);
+/// Center a string containing markup tags within a given width
+fn center_markup(s: &str, width: usize) -> String {
+    let visible = super::strip_markup_len(s);
     if visible >= width {
         return s.to_string();
     }
@@ -109,7 +109,7 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = splash_widget(&theme, 80, 20);
         for line in &lines {
-            let visible = super::super::strip_ansi_len(line);
+            let visible = super::super::strip_markup_len(line);
             assert_eq!(visible, 80, "Line visible width mismatch: {:?}", line);
         }
     }
@@ -129,15 +129,15 @@ mod tests {
     }
 
     #[test]
-    fn center_ansi_centers_plain_string() {
+    fn center_markup_centers_plain_string() {
         // "hello" is 5 chars, centering in 11 → 3 left, 3 right
-        let result = center_ansi("hello", 11);
+        let result = center_markup("hello", 11);
         assert_eq!(result, "   hello   ");
     }
 
     #[test]
-    fn center_ansi_returns_as_is_when_too_wide() {
-        let result = center_ansi("hello world", 5);
+    fn center_markup_returns_as_is_when_too_wide() {
+        let result = center_markup("hello world", 5);
         assert_eq!(result, "hello world");
     }
 }

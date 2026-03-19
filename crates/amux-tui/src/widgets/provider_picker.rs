@@ -1,6 +1,9 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, RESET};
+use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE, BG_CLOSE};
 use crate::state::modal::ModalState;
 use crate::state::config::ConfigState;
+
+/// Black text color for highlighted items
+const BLACK_FG: &str = "[fg=rgb(0,0,0)]";
 
 /// All supported LLM providers.
 pub const PROVIDERS: &[&str] = &[
@@ -34,7 +37,7 @@ pub fn provider_picker_widget(
     // Size: ~35% width, fits provider list + header + footer
     let list_len = PROVIDERS.len();
     let picker_w = (screen_width * 35 / 100).max(35).min(screen_width);
-    let picker_h = (list_len + 4).max(10).min(screen_height); // header + list + hints + border
+    let picker_h = (list_len + 4).max(10).min(screen_height);
     let inner_w = picker_w.saturating_sub(2);
 
     let x_pad = (screen_width.saturating_sub(picker_w)) / 2;
@@ -59,7 +62,7 @@ pub fn provider_picker_widget(
         title,
         super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -76,27 +79,27 @@ pub fn provider_picker_widget(
         let line = if is_selected {
             // Selected: amber highlight
             format!(
-                " {}{}> {}{}{}",
+                " {}{}> {}{}{}{}",
                 theme.accent_secondary.bg(),
-                "\x1b[38;5;0m", // black text on amber
+                BLACK_FG,
                 provider,
-                RESET,
+                FG_CLOSE,
+                BG_CLOSE,
                 " ".repeat(inner_w.saturating_sub(provider.len() + 3)),
             )
         } else if is_active && !active_provider.is_empty() {
-            // Active but not selected: dim accent
             format!(
                 "  {}• {}{}",
                 theme.accent_secondary.fg(),
                 provider,
-                RESET,
+                FG_CLOSE,
             )
         } else {
             format!(
                 "   {}{}{}",
                 theme.fg_active.fg(),
                 provider,
-                RESET,
+                FG_CLOSE,
             )
         };
 
@@ -107,7 +110,7 @@ pub fn provider_picker_widget(
             bc, b.vertical,
             padded,
             b.vertical,
-            RESET,
+            FG_CLOSE,
             " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
         ));
     }
@@ -119,14 +122,14 @@ pub fn provider_picker_widget(
         theme.fg_active.fg(), theme.fg_dim.fg(),
         theme.fg_active.fg(), theme.fg_dim.fg(),
     );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, RESET), inner_w);
+    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
     result.push(format!(
         "{}{}{}{}{}{}{}",
         " ".repeat(x_pad),
         bc, b.vertical,
         padded_hints,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -137,7 +140,7 @@ pub fn provider_picker_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_w),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -202,9 +205,7 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = provider_picker_widget(&modal, &config, &theme, 120, 40);
         let joined = lines.join("");
-        // First provider "OpenAI" should be highlighted (amber bg used)
         assert!(joined.contains("OpenAI"));
-        // cursor == 0 so first item is selected, amber bg escape used
         assert!(joined.contains(&theme.accent_secondary.bg()));
     }
 
@@ -212,12 +213,11 @@ mod tests {
     fn provider_picker_navigation_moves_cursor() {
         let mut modal = ModalState::new();
         modal.reduce(ModalAction::Push(ModalKind::ProviderPicker));
-        modal.reduce(ModalAction::Navigate(2)); // cursor = 2 → Groq
+        modal.reduce(ModalAction::Navigate(2));
         let config = ConfigState::new();
         let theme = ThemeTokens::default();
         let lines = provider_picker_widget(&modal, &config, &theme, 120, 40);
         let joined = lines.join("");
-        // "Groq" should appear with the selection marker
         assert!(joined.contains("Groq"));
     }
 

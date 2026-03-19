@@ -1,6 +1,9 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, RESET};
+use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE, BG_CLOSE};
 use crate::state::chat::ChatState;
 use crate::state::modal::ModalState;
+
+/// Black text color for highlighted items
+const BLACK_FG: &str = "[fg=rgb(0,0,0)]";
 
 /// Render the thread picker as an overlay.
 /// Returns a full-screen Vec<String> (one entry per row) centered over the terminal.
@@ -43,7 +46,7 @@ pub fn thread_picker_widget(
         title,
         super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -54,7 +57,7 @@ pub fn thread_picker_widget(
         theme.fg_active.fg(),
         if query.is_empty() { "Search threads..." } else { query },
         if query.is_empty() { "" } else { "█" },
-        RESET,
+        FG_CLOSE,
     );
     let padded_input = super::pad_to_width(&input_line, inner_w);
     result.push(format!(
@@ -63,7 +66,7 @@ pub fn thread_picker_widget(
         bc, b.vertical,
         padded_input,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -74,7 +77,7 @@ pub fn thread_picker_widget(
         bc, b.vertical,
         super::repeat_char('─', inner_w),
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -103,17 +106,18 @@ pub fn thread_picker_widget(
             let is_selected = cursor == 0;
             if is_selected {
                 format!(
-                    " {}{}  + New conversation{}{}",
+                    " {}{}  + New conversation{}{}{}",
                     theme.accent_secondary.bg(),
-                    "\x1b[38;5;0m",
-                    RESET,
+                    BLACK_FG,
+                    FG_CLOSE,
+                    BG_CLOSE,
                     " ".repeat(inner_w.saturating_sub(20)),
                 )
             } else {
                 format!(
                     "  {}{} + New conversation{}",
                     theme.fg_dim.fg(),
-                    RESET,
+                    FG_CLOSE,
                     String::new(),
                 )
             }
@@ -126,9 +130,9 @@ pub fn thread_picker_widget(
 
                 // Status dot: green for active/streaming, grey otherwise
                 let dot = if is_active {
-                    format!("{}●{}", theme.accent_success.fg(), RESET)
+                    format!("{}●{}", theme.accent_success.fg(), FG_CLOSE)
                 } else {
-                    format!("{}●{}", theme.fg_dim.fg(), RESET)
+                    format!("{}●{}", theme.fg_dim.fg(), FG_CLOSE)
                 };
 
                 // Time ago
@@ -148,16 +152,17 @@ pub fn thread_picker_widget(
 
                 if is_selected {
                     format!(
-                        " {}{}{} {}{}  {}  {}  {}{}",
+                        " {}{}{} {}{}{}{}  {}  {}{}",
                         theme.accent_secondary.bg(),
-                        "\x1b[38;5;0m",
+                        BLACK_FG,
                         dot,
                         title,
-                        RESET,
+                        FG_CLOSE,
+                        BG_CLOSE,
                         theme.accent_secondary.bg(),
                         time_str,
                         token_str,
-                        RESET,
+                        BG_CLOSE,
                     )
                 } else {
                     format!(
@@ -165,11 +170,11 @@ pub fn thread_picker_widget(
                         dot,
                         theme.fg_active.fg(),
                         title,
-                        RESET,
+                        FG_CLOSE,
                         theme.fg_dim.fg(),
                         time_str,
                         token_str,
-                        RESET,
+                        FG_CLOSE,
                     )
                 }
             } else {
@@ -184,7 +189,7 @@ pub fn thread_picker_widget(
             bc, b.vertical,
             padded,
             b.vertical,
-            RESET,
+            FG_CLOSE,
             " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
         ));
     }
@@ -196,14 +201,14 @@ pub fn thread_picker_widget(
         theme.fg_active.fg(), theme.fg_dim.fg(),
         theme.fg_active.fg(), theme.fg_dim.fg(),
     );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, RESET), inner_w);
+    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
     result.push(format!(
         "{}{}{}{}{}{}{}",
         " ".repeat(x_pad),
         bc, b.vertical,
         padded_hints,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -214,7 +219,7 @@ pub fn thread_picker_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_w),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -228,7 +233,6 @@ pub fn thread_picker_widget(
 }
 
 /// Format millisecond timestamp as "Xm ago" or "Xh ago" etc.
-/// Returns empty string if timestamp is 0 (unknown).
 fn format_time_ago(updated_at: u64) -> String {
     if updated_at == 0 {
         return String::new();

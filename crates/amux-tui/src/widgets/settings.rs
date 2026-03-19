@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, RESET};
+use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE};
 use crate::state::settings::{SettingsState, SettingsTab};
 use crate::state::config::ConfigState;
 
@@ -42,7 +42,7 @@ pub fn settings_widget(
         title,
         super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
     ));
 
@@ -55,7 +55,7 @@ pub fn settings_widget(
         bc, b.vertical,
         padded_tab,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
     ));
 
@@ -66,7 +66,7 @@ pub fn settings_widget(
         bc, b.vertical,
         super::repeat_char('─', inner_w),
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
     ));
 
@@ -83,7 +83,7 @@ pub fn settings_widget(
             bc, b.vertical,
             padded,
             b.vertical,
-            RESET,
+            FG_CLOSE,
             " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
         ));
     }
@@ -94,14 +94,14 @@ pub fn settings_widget(
         theme.fg_active.fg(), theme.fg_dim.fg(),
         theme.fg_active.fg(), theme.fg_dim.fg(),
     );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, RESET), inner_w);
+    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
     result.push(format!(
         "{}{}{}{}{}{}{}",
         " ".repeat(x_pad),
         bc, b.vertical,
         padded_hints,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
     ));
 
@@ -112,7 +112,7 @@ pub fn settings_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_w),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + panel_w)),
     ));
 
@@ -139,12 +139,12 @@ fn render_tab_bar(settings: &SettingsState, theme: &ThemeTokens, _inner_w: usize
     let mut parts = Vec::new();
     for (tab, label) in &tabs {
         if *tab == active {
-            // Active: bright white with brackets
+            // Active: bright white with escaped brackets
             parts.push(format!(
-                "{}[{}]{}",
+                "{}\\[{}]{}",
                 theme.fg_active.fg(),
                 label,
-                RESET,
+                FG_CLOSE,
             ));
         } else {
             // Inactive: dim
@@ -152,7 +152,7 @@ fn render_tab_bar(settings: &SettingsState, theme: &ThemeTokens, _inner_w: usize
                 "{} {} {}",
                 theme.fg_dim.fg(),
                 label,
-                RESET,
+                FG_CLOSE,
             ));
         }
     }
@@ -185,53 +185,47 @@ fn render_provider_tab(
 ) -> Vec<String> {
     let mut lines = Vec::new();
 
-    // Blank line
     lines.push(String::new());
 
-    // Section header
     lines.push(format!(
         "  {}Provider{}",
-        theme.fg_active.fg(), RESET,
+        theme.fg_active.fg(), FG_CLOSE,
     ));
     lines.push(format!(
         "  {}Select your LLM provider and credentials{}",
-        theme.fg_dim.fg(), RESET,
+        theme.fg_dim.fg(), FG_CLOSE,
     ));
 
-    // Blank line
     lines.push(String::new());
 
-    // Fields
     let provider = if config.provider().is_empty() { "(not set)" } else { config.provider() };
     let base_url = if config.base_url().is_empty() { "(not set)" } else { config.base_url() };
     let model = if config.model().is_empty() { "(not set)" } else { config.model() };
 
-    // Masked API key
     let api_key_display = mask_api_key(config.api_key());
 
     lines.push(format!(
-        "  {}Active Provider:{}  {} ▾ {}{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), provider, RESET,
+        "  {}Active Provider:{} {} ▾ {}{}",
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), provider, FG_CLOSE,
     ));
     lines.push(format!(
-        "  {}Base URL:        {}  {}{}{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), base_url, RESET,
+        "  {}Base URL:        {} {}{}{}",
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), base_url, FG_CLOSE,
     ));
     lines.push(format!(
-        "  {}API Key:         {}  {}{}{} {}[show]{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), api_key_display, RESET,
-        theme.fg_dim.fg(), RESET,
+        "  {}API Key:         {} {}{}{} {}\\[show]{}",
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), api_key_display, FG_CLOSE,
+        theme.fg_dim.fg(), FG_CLOSE,
     ));
     lines.push(format!(
-        "  {}Model:           {}  {}{}{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), model, RESET,
+        "  {}Model:           {} {}{}{}",
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), model, FG_CLOSE,
     ));
 
-    // Pad remaining rows
     while lines.len() < content_h {
         lines.push(String::new());
     }
@@ -248,28 +242,28 @@ fn render_model_tab(
     let mut lines = Vec::new();
 
     lines.push(String::new());
-    lines.push(format!("  {}Model{}", theme.fg_active.fg(), RESET));
-    lines.push(format!("  {}Select model for current provider{}", theme.fg_dim.fg(), RESET));
+    lines.push(format!("  {}Model{}", theme.fg_active.fg(), FG_CLOSE));
+    lines.push(format!("  {}Select model for current provider{}", theme.fg_dim.fg(), FG_CLOSE));
     lines.push(String::new());
 
     let current = if config.model().is_empty() { "(not set)" } else { config.model() };
     lines.push(format!(
         "  {}Current:{}   {}{}{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), current, RESET,
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), current, FG_CLOSE,
     ));
 
     let models = config.fetched_models();
     if models.is_empty() {
         lines.push(format!(
             "  {}Available:{}  {}(press Enter to fetch){}",
-            theme.fg_dim.fg(), RESET,
-            theme.fg_dim.fg(), RESET,
+            theme.fg_dim.fg(), FG_CLOSE,
+            theme.fg_dim.fg(), FG_CLOSE,
         ));
     } else {
         lines.push(format!(
             "  {}Available:{}",
-            theme.fg_dim.fg(), RESET,
+            theme.fg_dim.fg(), FG_CLOSE,
         ));
         for m in models {
             let display_name = m.name.as_deref().unwrap_or(&m.id);
@@ -277,12 +271,12 @@ fn render_model_tab(
             if is_active {
                 lines.push(format!(
                     "    {}> {}{}",
-                    theme.accent_secondary.fg(), display_name, RESET,
+                    theme.accent_secondary.fg(), display_name, FG_CLOSE,
                 ));
             } else {
                 lines.push(format!(
                     "    {}  {}{}",
-                    theme.fg_dim.fg(), display_name, RESET,
+                    theme.fg_dim.fg(), display_name, FG_CLOSE,
                 ));
             }
         }
@@ -299,11 +293,10 @@ fn render_tools_tab(theme: &ThemeTokens, _inner_w: usize, content_h: usize) -> V
     let mut lines = Vec::new();
 
     lines.push(String::new());
-    lines.push(format!("  {}Tools{}", theme.fg_active.fg(), RESET));
-    lines.push(format!("  {}Enable or disable tool categories{}", theme.fg_dim.fg(), RESET));
+    lines.push(format!("  {}Tools{}", theme.fg_active.fg(), FG_CLOSE));
+    lines.push(format!("  {}Enable or disable tool categories{}", theme.fg_dim.fg(), FG_CLOSE));
     lines.push(String::new());
 
-    // Default tool categories (all enabled by default except Web Browse and Messaging Gateway)
     let tools = [
         (true, "Terminal / Bash"),
         (true, "File Operations"),
@@ -315,14 +308,14 @@ fn render_tools_tab(theme: &ThemeTokens, _inner_w: usize, content_h: usize) -> V
 
     for (enabled, name) in &tools {
         let checkbox = if *enabled {
-            format!("{}[x]{}", theme.accent_success.fg(), RESET)
+            format!("{}\\[x]{}", theme.accent_success.fg(), FG_CLOSE)
         } else {
-            format!("{}[ ]{}", theme.fg_dim.fg(), RESET)
+            format!("{}\\[ ]{}", theme.fg_dim.fg(), FG_CLOSE)
         };
         lines.push(format!(
             "  {} {}{}{}",
             checkbox,
-            theme.fg_active.fg(), name, RESET,
+            theme.fg_active.fg(), name, FG_CLOSE,
         ));
     }
 
@@ -342,24 +335,24 @@ fn render_reasoning_tab(
     let mut lines = Vec::new();
 
     lines.push(String::new());
-    lines.push(format!("  {}Reasoning{}", theme.fg_active.fg(), RESET));
-    lines.push(format!("  {}Configure extended thinking{}", theme.fg_dim.fg(), RESET));
+    lines.push(format!("  {}Reasoning{}", theme.fg_active.fg(), FG_CLOSE));
+    lines.push(format!("  {}Configure extended thinking{}", theme.fg_dim.fg(), FG_CLOSE));
     lines.push(String::new());
 
     let current_effort = config.reasoning_effort();
     let effort_display = if current_effort.is_empty() { "Medium" } else { current_effort };
 
     lines.push(format!(
-        "  {}Effort:{}  {}(●) {}{}  {}← current{}",
-        theme.fg_dim.fg(), RESET,
-        theme.accent_secondary.fg(), effort_display, RESET,
-        theme.fg_dim.fg(), RESET,
+        "  {}Effort:{}  {}(●) {}{} {}← current{}",
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.accent_secondary.fg(), effort_display, FG_CLOSE,
+        theme.fg_dim.fg(), FG_CLOSE,
     ));
     lines.push(String::new());
     lines.push(format!(
         "  {}Options:{}  {}Off / Minimal / Low / Medium / High / Extra High{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_dim.fg(), RESET,
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_dim.fg(), FG_CLOSE,
     ));
 
     while lines.len() < content_h {
@@ -373,14 +366,14 @@ fn render_gateway_tab(theme: &ThemeTokens, _inner_w: usize, content_h: usize) ->
     let mut lines = Vec::new();
 
     lines.push(String::new());
-    lines.push(format!("  {}Gateway{}", theme.fg_active.fg(), RESET));
-    lines.push(format!("  {}Messaging platform connections{}", theme.fg_dim.fg(), RESET));
+    lines.push(format!("  {}Gateway{}", theme.fg_active.fg(), FG_CLOSE));
+    lines.push(format!("  {}Messaging platform connections{}", theme.fg_dim.fg(), FG_CLOSE));
     lines.push(String::new());
 
     lines.push(format!(
-        "  {}Gateway Enabled:{}  {}[x] Yes{}",
-        theme.fg_dim.fg(), RESET,
-        theme.accent_success.fg(), RESET,
+        "  {}Gateway Enabled:{}  {}\\[x] Yes{}",
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.accent_success.fg(), FG_CLOSE,
     ));
 
     while lines.len() < content_h {
@@ -399,11 +392,10 @@ fn render_agent_tab(
     let mut lines = Vec::new();
 
     lines.push(String::new());
-    lines.push(format!("  {}Agent{}", theme.fg_active.fg(), RESET));
-    lines.push(format!("  {}Agent identity and behavior{}", theme.fg_dim.fg(), RESET));
+    lines.push(format!("  {}Agent{}", theme.fg_active.fg(), FG_CLOSE));
+    lines.push(format!("  {}Agent identity and behavior{}", theme.fg_dim.fg(), FG_CLOSE));
     lines.push(String::new());
 
-    // Derive agent name from raw config, or fall back to "Sisyphus"
     let agent_name = if let Some(raw) = config.agent_config_raw() {
         raw.get("agent_name")
             .and_then(|v| v.as_str())
@@ -415,13 +407,13 @@ fn render_agent_tab(
 
     lines.push(format!(
         "  {}Agent Name:{}  {}{}{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), agent_name, RESET,
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), agent_name, FG_CLOSE,
     ));
     lines.push(format!(
         "  {}Backend:{}     {}daemon{}",
-        theme.fg_dim.fg(), RESET,
-        theme.fg_active.fg(), RESET,
+        theme.fg_dim.fg(), FG_CLOSE,
+        theme.fg_active.fg(), FG_CLOSE,
     ));
 
     while lines.len() < content_h {
@@ -432,7 +424,6 @@ fn render_agent_tab(
 }
 
 /// Mask an API key: show first 3 chars, dots, last 4 chars.
-/// If key is short, show dots only.
 fn mask_api_key(key: &str) -> String {
     if key.is_empty() {
         return "(not set)".to_string();
@@ -583,9 +574,7 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = settings_widget(&settings, &config, &theme, 120, 40);
         let joined = lines.join("");
-        // Should NOT contain the raw key
         assert!(!joined.contains("sk-abcdefgh12345678abcd"));
-        // Should contain masked dots
         assert!(joined.contains("••••••••"));
     }
 

@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, RESET};
+use crate::theme::{ThemeTokens, FG_CLOSE};
 use crate::state::task::{TaskState, TaskStatus, GoalRunStatus};
 use crate::state::sidebar::SidebarState;
 use super::pad_to_width;
@@ -7,42 +7,42 @@ use super::pad_to_width;
 
 fn status_dot_for_task(status: Option<TaskStatus>, theme: &ThemeTokens) -> String {
     match status {
-        Some(TaskStatus::InProgress) => format!("{}●{}", theme.accent_secondary.fg(), RESET),
-        Some(TaskStatus::Completed) => format!("{}●{}", theme.accent_success.fg(), RESET),
+        Some(TaskStatus::InProgress) => format!("{}●{}", theme.accent_secondary.fg(), FG_CLOSE),
+        Some(TaskStatus::Completed) => format!("{}●{}", theme.accent_success.fg(), FG_CLOSE),
         Some(TaskStatus::Failed) | Some(TaskStatus::FailedAnalyzing) => {
-            format!("{}●{}", theme.accent_danger.fg(), RESET)
+            format!("{}●{}", theme.accent_danger.fg(), FG_CLOSE)
         }
         Some(TaskStatus::Blocked) | Some(TaskStatus::AwaitingApproval) => {
-            format!("{}●{}", theme.accent_primary.fg(), RESET)
+            format!("{}●{}", theme.accent_primary.fg(), FG_CLOSE)
         }
-        _ => format!("{}●{}", theme.fg_dim.fg(), RESET),
+        _ => format!("{}●{}", theme.fg_dim.fg(), FG_CLOSE),
     }
 }
 
 fn status_label_for_task(status: Option<TaskStatus>, theme: &ThemeTokens) -> String {
     match status {
         Some(TaskStatus::InProgress) => {
-            format!("{}running{}", theme.accent_secondary.fg(), RESET)
+            format!("{}running{}", theme.accent_secondary.fg(), FG_CLOSE)
         }
-        Some(TaskStatus::Completed) => format!("{}done{}", theme.accent_success.fg(), RESET),
+        Some(TaskStatus::Completed) => format!("{}done{}", theme.accent_success.fg(), FG_CLOSE),
         Some(TaskStatus::Failed) | Some(TaskStatus::FailedAnalyzing) => {
-            format!("{}failed{}", theme.accent_danger.fg(), RESET)
+            format!("{}failed{}", theme.accent_danger.fg(), FG_CLOSE)
         }
-        Some(TaskStatus::Blocked) => format!("{}blocked{}", theme.fg_dim.fg(), RESET),
+        Some(TaskStatus::Blocked) => format!("{}blocked{}", theme.fg_dim.fg(), FG_CLOSE),
         Some(TaskStatus::AwaitingApproval) => {
-            format!("{}awaiting{}", theme.accent_primary.fg(), RESET)
+            format!("{}awaiting{}", theme.accent_primary.fg(), FG_CLOSE)
         }
-        Some(TaskStatus::Queued) | None => format!("{}idle{}", theme.fg_dim.fg(), RESET),
-        Some(TaskStatus::Cancelled) => format!("{}cancelled{}", theme.fg_dim.fg(), RESET),
+        Some(TaskStatus::Queued) | None => format!("{}idle{}", theme.fg_dim.fg(), FG_CLOSE),
+        Some(TaskStatus::Cancelled) => format!("{}cancelled{}", theme.fg_dim.fg(), FG_CLOSE),
     }
 }
 
 fn goal_run_dot(status: Option<GoalRunStatus>, theme: &ThemeTokens) -> String {
     match status {
-        Some(GoalRunStatus::Running) => format!("{}●{}", theme.accent_secondary.fg(), RESET),
-        Some(GoalRunStatus::Completed) => format!("{}●{}", theme.accent_success.fg(), RESET),
-        Some(GoalRunStatus::Failed) => format!("{}●{}", theme.accent_danger.fg(), RESET),
-        _ => format!("{}●{}", theme.fg_dim.fg(), RESET),
+        Some(GoalRunStatus::Running) => format!("{}●{}", theme.accent_secondary.fg(), FG_CLOSE),
+        Some(GoalRunStatus::Completed) => format!("{}●{}", theme.accent_success.fg(), FG_CLOSE),
+        Some(GoalRunStatus::Failed) => format!("{}●{}", theme.accent_danger.fg(), FG_CLOSE),
+        _ => format!("{}●{}", theme.fg_dim.fg(), FG_CLOSE),
     }
 }
 
@@ -72,25 +72,24 @@ pub fn subagents_widget(
 
         // Parent "agent" line  — title doubles as agent label
         let parent_line = format!(
-            "{}{}{} {} {} {}{}",
+            "{}{}{} {} {} {}",
             theme.fg_active.fg(),
             arrow,
-            RESET,
+            FG_CLOSE,
             run.title,
             dot,
             match run.status {
                 Some(GoalRunStatus::Running) => {
-                    format!("{}running{}", theme.accent_secondary.fg(), RESET)
+                    format!("{}running{}", theme.accent_secondary.fg(), FG_CLOSE)
                 }
                 Some(GoalRunStatus::Completed) => {
-                    format!("{}done{}", theme.accent_success.fg(), RESET)
+                    format!("{}done{}", theme.accent_success.fg(), FG_CLOSE)
                 }
                 Some(GoalRunStatus::Failed) => {
-                    format!("{}failed{}", theme.accent_danger.fg(), RESET)
+                    format!("{}failed{}", theme.accent_danger.fg(), FG_CLOSE)
                 }
-                _ => format!("{}idle{}", theme.fg_dim.fg(), RESET),
+                _ => format!("{}idle{}", theme.fg_dim.fg(), FG_CLOSE),
             },
-            RESET,
         );
         lines.push(pad_to_width(&parent_line, width));
 
@@ -103,7 +102,7 @@ pub fn subagents_widget(
 
             if child_tasks.is_empty() {
                 let none_line = format!(
-                    "  {}(no tasks){}", theme.fg_dim.fg(), RESET
+                    "  {}(no tasks){}", theme.fg_dim.fg(), FG_CLOSE
                 );
                 lines.push(pad_to_width(&none_line, width));
             } else {
@@ -119,7 +118,7 @@ pub fn subagents_widget(
                             "    {}└ thread: {}{}",
                             theme.fg_dim.fg(),
                             session_id,
-                            RESET
+                            FG_CLOSE
                         );
                         lines.push(pad_to_width(&thread_line, width));
                     }
@@ -141,9 +140,9 @@ pub fn subagents_widget(
             "{}{}{} {}daemon{}",
             theme.fg_dim.fg(),
             arrow,
-            RESET,
+            FG_CLOSE,
             theme.fg_active.fg(),
-            RESET,
+            FG_CLOSE,
         );
         lines.push(pad_to_width(&daemon_header, width));
 
@@ -159,12 +158,11 @@ pub fn subagents_widget(
 
     // ── Empty state ───────────────────────────────────────────────────────────
     if lines.is_empty() {
-        let empty = format!(" {}No agents{}", theme.fg_dim.fg(), RESET);
+        let empty = format!(" {}No agents{}", theme.fg_dim.fg(), FG_CLOSE);
         lines.push(pad_to_width(&empty, width));
     }
 
     // ── Footer aggregate counts ───────────────────────────────────────────────
-    // Show count at bottom (but only if there are items)
     if !goal_runs.is_empty() || !all_tasks.is_empty() {
         let running_count = all_tasks
             .iter()
@@ -179,9 +177,8 @@ pub fn subagents_widget(
             group_count,
             running_count,
             total_count,
-            RESET,
+            FG_CLOSE,
         );
-        // We'll emit this as the last content line (before padding)
         lines.push(pad_to_width(&footer, width));
     }
 
@@ -366,7 +363,6 @@ mod tests {
         let theme = make_theme();
         let lines = subagents_widget(&tasks, &sidebar, &theme, 60, 20);
         let combined = lines.join("\n");
-        // Footer should mention group count "2 groups" and running count "1/2 running"
         assert!(combined.contains("groups"), "footer should mention groups");
         assert!(combined.contains("running"), "footer should mention running");
     }

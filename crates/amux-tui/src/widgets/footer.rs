@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, ROUNDED_BORDER, RESET};
+use crate::theme::{ThemeTokens, ROUNDED_BORDER, FG_CLOSE};
 use crate::state::input::{InputState, InputMode};
 use crate::state::FocusArea;
 
@@ -16,15 +16,15 @@ pub fn footer_widget(
 
     // Line 1: mode + input
     let mode_label = match input.mode() {
-        InputMode::Normal => format!("{}NORMAL{}", theme.fg_dim.fg(), RESET),
-        InputMode::Insert => format!("{}INSERT{}", theme.accent_primary.fg(), RESET),
+        InputMode::Normal => format!("{}NORMAL{}", theme.fg_dim.fg(), FG_CLOSE),
+        InputMode::Insert => format!("{}INSERT{}", theme.accent_primary.fg(), FG_CLOSE),
     };
     let cursor = if input.mode() == InputMode::Insert { "█" } else { "" };
     let input_line = format!(
         " {} {}▶{} {}{}",
         mode_label,
         theme.accent_primary.fg(),
-        RESET,
+        FG_CLOSE,
         input.buffer(),
         cursor,
     );
@@ -44,7 +44,7 @@ pub fn footer_widget(
         theme.fg_active.fg(),
         theme.fg_dim.fg(),
     );
-    let padded_hints_raw = format!("{}{}", hints, RESET);
+    let padded_hints_raw = format!("{}{}", hints, FG_CLOSE);
     let padded_hints = pad_to_width(&padded_hints_raw, inner_width);
 
     vec![
@@ -54,23 +54,23 @@ pub fn footer_widget(
             b.top_left,
             super::repeat_char(b.horizontal, inner_width),
             b.top_right,
-            RESET
+            FG_CLOSE
         ),
-        format!("{}{}{}{}{}", bc, b.vertical, padded_input, b.vertical, RESET),
-        format!("{}{}{}{}{}", bc, b.vertical, padded_hints, b.vertical, RESET),
+        format!("{}{}{}{}{}", bc, b.vertical, padded_input, b.vertical, FG_CLOSE),
+        format!("{}{}{}{}{}", bc, b.vertical, padded_hints, b.vertical, FG_CLOSE),
         format!(
             "{}{}{}{}{}",
             bc,
             b.bottom_left,
             super::repeat_char(b.horizontal, inner_width),
             b.bottom_right,
-            RESET
+            FG_CLOSE
         ),
     ]
 }
 
 fn pad_to_width(s: &str, width: usize) -> String {
-    let visible = super::strip_ansi_len(s);
+    let visible = super::strip_markup_len(s);
     if visible < width {
         format!("{}{}", s, " ".repeat(width - visible))
     } else {

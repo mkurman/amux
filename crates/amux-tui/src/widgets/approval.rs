@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, RESET};
+use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE};
 use crate::state::approval::{ApprovalState, RiskLevel};
 
 /// Render the approval modal as an overlay.
@@ -67,7 +67,7 @@ pub fn approval_widget(
         title,
         super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + modal_w)),
     ));
 
@@ -80,7 +80,7 @@ pub fn approval_widget(
             bc, b.vertical,
             padded,
             b.vertical,
-            RESET,
+            FG_CLOSE,
             " ".repeat(screen_width.saturating_sub(x_pad + modal_w)),
         ));
     };
@@ -93,7 +93,7 @@ pub fn approval_widget(
         "  {}{}{}",
         risk_color,
         risk_label,
-        RESET,
+        FG_CLOSE,
     );
     push_line(&mut result, &badge_line);
 
@@ -104,8 +104,8 @@ pub fn approval_widget(
         // Command text
         let cmd_label = format!(
             "  {}Command:{} {}{}{}",
-            theme.fg_dim.fg(), RESET,
-            theme.fg_active.fg(), ap.command, RESET,
+            theme.fg_dim.fg(), FG_CLOSE,
+            theme.fg_active.fg(), ap.command, FG_CLOSE,
         );
         push_line(&mut result, &cmd_label);
 
@@ -113,8 +113,8 @@ pub fn approval_widget(
         if !ap.blast_radius.is_empty() {
             let br_line = format!(
                 "  {}Blast radius:{} {}{}{}",
-                theme.fg_dim.fg(), RESET,
-                theme.fg_active.fg(), ap.blast_radius, RESET,
+                theme.fg_dim.fg(), FG_CLOSE,
+                theme.fg_active.fg(), ap.blast_radius, FG_CLOSE,
             );
             push_line(&mut result, &br_line);
         }
@@ -123,18 +123,18 @@ pub fn approval_widget(
         if let Some(task_title) = &ap.task_title {
             let task_line = format!(
                 "  {}Task:{} {}{}{}",
-                theme.fg_dim.fg(), RESET,
-                theme.fg_dim.fg(), task_title, RESET,
+                theme.fg_dim.fg(), FG_CLOSE,
+                theme.fg_dim.fg(), task_title, FG_CLOSE,
             );
             push_line(&mut result, &task_line);
         }
     } else {
-        push_line(&mut result, &format!("  {}No pending approvals.{}", theme.fg_dim.fg(), RESET));
+        push_line(&mut result, &format!("  {}No pending approvals.{}", theme.fg_dim.fg(), FG_CLOSE));
     }
 
     // Fill remaining inner lines up to the action row
-    let _content_rows_used = result.len() - y_pad - 1; // subtract top padding + top border
-    let rows_before_action = inner_h.saturating_sub(2); // leave 1 for separator, 1 for actions
+    let _content_rows_used = result.len() - y_pad - 1;
+    let rows_before_action = inner_h.saturating_sub(2);
     while result.len() - y_pad - 1 < rows_before_action {
         push_line(&mut result, "");
     }
@@ -146,22 +146,21 @@ pub fn approval_widget(
         bc, b.vertical,
         super::repeat_char('─', inner_w),
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + modal_w)),
     );
-    // Replace last empty line with separator if we haven't exceeded inner_h
     if result.len() - y_pad - 1 < inner_h {
         result.push(sep_line);
     }
 
-    // Action row
+    // Action row — escape literal brackets around key labels
     let actions = format!(
-        "  {}[Y]{} Allow once  {}[A]{} Allow for session  {}[N]{} Reject",
+        "  {}\\[Y]{} Allow once  {}\\[A]{} Allow for session  {}\\[N]{} Reject",
         theme.accent_success.fg(), theme.fg_active.fg(),
         theme.accent_secondary.fg(), theme.fg_active.fg(),
         theme.accent_danger.fg(), theme.fg_active.fg(),
     );
-    let action_line = format!("{}{}", actions, RESET);
+    let action_line = format!("{}{}", actions, FG_CLOSE);
     if result.len() - y_pad - 1 < inner_h {
         push_line(&mut result, &action_line);
     }
@@ -178,7 +177,7 @@ pub fn approval_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_w),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + modal_w)),
     ));
 
@@ -274,9 +273,10 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = approval_widget(&approval, &theme, 120, 40);
         let joined = lines.join("");
-        assert!(joined.contains("[Y]"));
-        assert!(joined.contains("[A]"));
-        assert!(joined.contains("[N]"));
+        // Escaped brackets
+        assert!(joined.contains("\\[Y]"));
+        assert!(joined.contains("\\[A]"));
+        assert!(joined.contains("\\[N]"));
     }
 
     #[test]
@@ -290,7 +290,6 @@ mod tests {
         let lines = approval_widget(&approval, &theme, 120, 40);
         let joined = lines.join("");
         assert!(joined.contains("CRITICAL RISK"));
-        // Should use accent_danger color
         assert!(joined.contains(&theme.accent_danger.fg()));
     }
 

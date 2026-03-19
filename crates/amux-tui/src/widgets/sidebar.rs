@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, ROUNDED_BORDER, RESET};
+use crate::theme::{ThemeTokens, ROUNDED_BORDER, FG_CLOSE};
 use crate::state::sidebar::SidebarState;
 use crate::state::task::TaskState;
 
@@ -19,21 +19,21 @@ pub fn sidebar_widget(
 
     let mut result = Vec::new();
 
-    // Title bar with tabs
+    // Title bar with tabs — escape literal brackets around tab labels
     let title = format!(
         " {} {} ",
         if sidebar.active_tab() == crate::state::sidebar::SidebarTab::Tasks {
-            format!("{}[Tasks]{}", theme.fg_active.fg(), bc)
+            format!("{}\\[Tasks]{}", theme.fg_active.fg(), bc)
         } else {
             format!("{}Tasks{}", theme.fg_dim.fg(), bc)
         },
         if sidebar.active_tab() == crate::state::sidebar::SidebarTab::Subagents {
-            format!("{}[Subagents]{}", theme.fg_active.fg(), bc)
+            format!("{}\\[Subagents]{}", theme.fg_active.fg(), bc)
         } else {
             format!("{}Subagents{}", theme.fg_dim.fg(), bc)
         },
     );
-    let title_visible_len = crate::widgets::strip_ansi_len(&title);
+    let title_visible_len = crate::widgets::strip_markup_len(&title);
     let remaining = inner_width.saturating_sub(title_visible_len);
 
     result.push(format!(
@@ -43,7 +43,7 @@ pub fn sidebar_widget(
         title,
         super::repeat_char(b.horizontal, remaining.saturating_sub(1).min(inner_width)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
     ));
 
     // Body — routed to real widgets based on active tab
@@ -57,7 +57,7 @@ pub fn sidebar_widget(
     };
 
     for line in &body_lines {
-        result.push(format!("{}{}{}{}{}", bc, b.vertical, line, b.vertical, RESET));
+        result.push(format!("{}{}{}{}{}", bc, b.vertical, line, b.vertical, FG_CLOSE));
     }
 
     // Bottom border
@@ -66,7 +66,7 @@ pub fn sidebar_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_width),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
     ));
 
     result

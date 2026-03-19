@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, ROUNDED_BORDER, RESET};
+use crate::theme::{ThemeTokens, ROUNDED_BORDER, FG_CLOSE, BG_CLOSE};
 use crate::state::chat::ChatState;
 
 /// Render the chat pane (left pane in two-pane layout)
@@ -33,7 +33,7 @@ pub fn chat_widget(
         title_colored,
         super::repeat_char(b.horizontal, remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
     ));
 
     // Content area
@@ -46,7 +46,7 @@ pub fn chat_widget(
 
     for line in &content_lines {
         let padded = super::pad_to_width(line, inner_width);
-        result.push(format!("{}{}{}{}{}", bc, b.vertical, padded, b.vertical, RESET));
+        result.push(format!("{}{}{}{}{}", bc, b.vertical, padded, b.vertical, FG_CLOSE));
     }
 
     // Bottom border
@@ -55,7 +55,7 @@ pub fn chat_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_width),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
     ));
 
     result
@@ -88,10 +88,10 @@ fn render_messages(
         let streaming_line = format!(
             "  {}ASST{} {}{}\u{2588}{}",
             theme.accent_assistant.bg(),
-            RESET,
+            BG_CLOSE,
             theme.fg_active.fg(),
             chat.streaming_content(),
-            RESET,
+            FG_CLOSE,
         );
         all_lines.push(streaming_line);
     }

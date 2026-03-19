@@ -9,12 +9,14 @@ mod wire;
 use std::{sync::mpsc, thread};
 
 use anyhow::Result;
-use ftui_runtime::{string_model::StringModelAdapter, App, ScreenMode};
+use ftui_runtime::{App, ScreenMode};
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::app::TuiModel;
 use crate::client::DaemonClient;
 use crate::state::DaemonCommand;
+
+mod markup_adapter;
 
 fn main() -> Result<()> {
     let log_file = std::fs::File::create(std::env::temp_dir().join("tamux-tui.log"))?;
@@ -30,7 +32,7 @@ fn main() -> Result<()> {
 
     let model = TuiModel::new(daemon_event_rx, daemon_cmd_tx);
 
-    App::new(StringModelAdapter::new(model))
+    App::new(markup_adapter::MarkupModelAdapter::new(model))
         .screen_mode(ScreenMode::AltScreen)
         .with_mouse()
         .run()?;

@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, ROUNDED_BORDER, RESET};
+use crate::theme::{ThemeTokens, ROUNDED_BORDER, FG_CLOSE};
 use crate::state::config::ConfigState;
 use crate::state::chat::ChatState;
 
@@ -19,13 +19,13 @@ pub fn header_widget(
         theme.fg_dim.fg(),
         theme.accent_primary.fg(),
         theme.fg_dim.fg(),
-        RESET,
+        FG_CLOSE,
     );
 
     let model = if config.model.is_empty() {
         "no model".to_string()
     } else {
-        format!("{}{}{}", theme.fg_active.fg(), config.model, RESET)
+        format!("{}{}{}", theme.fg_active.fg(), config.model, FG_CLOSE)
     };
 
     // Token usage from active thread
@@ -43,7 +43,7 @@ pub fn header_widget(
         } else {
             "0".to_string()
         },
-        RESET,
+        FG_CLOSE,
     );
 
     let inner_width = width.saturating_sub(2); // border chars
@@ -57,7 +57,7 @@ pub fn header_widget(
     );
 
     // Pad content to inner_width
-    let visible_len = super::strip_ansi_len(&content);
+    let visible_len = super::strip_markup_len(&content);
     let padded = if visible_len < inner_width {
         format!("{}{}", content, " ".repeat(inner_width - visible_len))
     } else {
@@ -71,16 +71,16 @@ pub fn header_widget(
             b.top_left,
             super::repeat_char(b.horizontal, inner_width),
             b.top_right,
-            RESET
+            FG_CLOSE
         ),
-        format!("{}{}{}{}{}", bc, b.vertical, padded, b.vertical, RESET),
+        format!("{}{}{}{}{}", bc, b.vertical, padded, b.vertical, FG_CLOSE),
         format!(
             "{}{}{}{}{}",
             bc,
             b.bottom_left,
             super::repeat_char(b.horizontal, inner_width),
             b.bottom_right,
-            RESET
+            FG_CLOSE
         ),
     ]
 }

@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use crate::theme::{ThemeTokens, RESET};
+use crate::theme::{ThemeTokens, FG_CLOSE};
 
 /// Render a reasoning block — collapsed (1 line) or expanded (header + content with dark blue border).
 ///
-/// Collapsed: `▸ [+] Reasoning (12s · 847 tok)` in fg_dim
-/// Expanded: `▾ [-] Reasoning (12s · 847 tok)` then reasoning text with dark blue `│` left border
+/// Collapsed: `▸ \[+] Reasoning (12s · 847 tok)` in fg_dim
+/// Expanded: `▾ \[-] Reasoning (12s · 847 tok)` then reasoning text with dark blue `│` left border
 pub fn reasoning_widget(
     reasoning: &str,
     expanded: bool,
@@ -19,14 +19,16 @@ pub fn reasoning_widget(
     // Build the stats suffix: "(12s · 847 tok)"
     let stats = build_stats(elapsed_secs, token_count);
 
+    // Dark blue color for reasoning border
+    let dark_blue = crate::theme::Color(24);
+
     if expanded {
-        // Header line: ▾ [-] Reasoning (12s · 847 tok)
+        // Header line: ▾ \[-] Reasoning (12s · 847 tok)
         let header = format!(
-            "{}▾ [-] Reasoning {}{}{}",
+            "{}▾ \\[-] Reasoning {}{}",
             theme.fg_dim.fg(),
             stats,
-            RESET,
-            "",
+            FG_CLOSE,
         );
         lines.push(header);
 
@@ -36,8 +38,8 @@ pub fn reasoning_widget(
             if paragraph.is_empty() {
                 lines.push(format!(
                     "{}\u{2502}{}",
-                    "\x1b[38;5;24m", // dark blue
-                    RESET,
+                    dark_blue.fg(),
+                    FG_CLOSE,
                 ));
                 continue;
             }
@@ -46,21 +48,21 @@ pub fn reasoning_widget(
             for line in wrapped {
                 lines.push(format!(
                     "{}\u{2502}{} {}{}{}",
-                    "\x1b[38;5;24m", // dark blue border
-                    RESET,
+                    dark_blue.fg(),
+                    FG_CLOSE,
                     theme.fg_dim.fg(),
                     line,
-                    RESET,
+                    FG_CLOSE,
                 ));
             }
         }
     } else {
-        // Collapsed single line: ▸ [+] Reasoning (12s · 847 tok)
+        // Collapsed single line: ▸ \[+] Reasoning (12s · 847 tok)
         let line = format!(
-            "{}▸ [+] Reasoning {}{}",
+            "{}▸ \\[+] Reasoning {}{}",
             theme.fg_dim.fg(),
             stats,
-            RESET,
+            FG_CLOSE,
         );
         lines.push(line);
     }
@@ -122,7 +124,8 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = reasoning_widget("Some deep thoughts", false, Some(12), Some(847), &theme, 80);
         let line = &lines[0];
-        assert!(line.contains("[+]"), "expected [+] in: {}", line);
+        // In markup the literal [+] is escaped as \[+]
+        assert!(line.contains("\\[+]"), "expected \\[+] in: {}", line);
         assert!(line.contains("Reasoning"), "expected Reasoning in: {}", line);
     }
 
@@ -146,7 +149,7 @@ mod tests {
     fn reasoning_widget_expanded_shows_minus_icon() {
         let theme = ThemeTokens::default();
         let lines = reasoning_widget("Thinking...", true, Some(5), None, &theme, 80);
-        assert!(lines[0].contains("[-]"), "expected [-] in header: {}", lines[0]);
+        assert!(lines[0].contains("\\[-]"), "expected \\[-] in header: {}", lines[0]);
         assert!(lines[0].contains("Reasoning"), "expected Reasoning in header: {}", lines[0]);
     }
 
@@ -154,9 +157,9 @@ mod tests {
     fn reasoning_widget_expanded_shows_dark_blue_border() {
         let theme = ThemeTokens::default();
         let lines = reasoning_widget("First line", true, None, None, &theme, 80);
-        // Content lines after header should contain the dark blue border color
+        // Content lines after header should contain the dark blue color markup tag
         let content_joined = lines[1..].join("");
-        assert!(content_joined.contains("\x1b[38;5;24m"), "expected dark blue color");
+        assert!(content_joined.contains("[fg=rgb("), "expected markup fg tag");
         assert!(content_joined.contains('\u{2502}'), "expected │ border char");
     }
 

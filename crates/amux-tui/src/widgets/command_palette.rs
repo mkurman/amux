@@ -1,5 +1,8 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, RESET};
+use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE, BG_CLOSE};
 use crate::state::modal::ModalState;
+
+/// Black text color for highlighted items
+const BLACK_FG: &str = "[fg=rgb(0,0,0)]";
 
 /// Render the command palette as an overlay.
 /// Returns a full-screen Vec<String> (one entry per row) centered over the terminal.
@@ -41,7 +44,7 @@ pub fn command_palette_widget(
         title,
         super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
     ));
 
@@ -52,7 +55,7 @@ pub fn command_palette_widget(
         theme.fg_active.fg(),
         if query.is_empty() { "/" } else { query },
         "█",
-        RESET,
+        FG_CLOSE,
     );
     let padded_input = super::pad_to_width(&input_line, inner_w);
     result.push(format!(
@@ -61,7 +64,7 @@ pub fn command_palette_widget(
         bc, b.vertical,
         padded_input,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
     ));
 
@@ -72,7 +75,7 @@ pub fn command_palette_widget(
         bc, b.vertical,
         super::repeat_char('─', inner_w),
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
     ));
 
@@ -91,22 +94,24 @@ pub fn command_palette_widget(
             if is_selected {
                 // Amber bg, black text
                 format!(
-                    " {}{}> /{:<12} {}{}",
+                    " {}{}> /{:<12} {}{}{}",
                     theme.accent_secondary.bg(),
-                    "\x1b[38;5;0m", // black text
+                    BLACK_FG,
                     item.command,
                     item.description,
-                    RESET,
+                    FG_CLOSE,
+                    BG_CLOSE,
                 )
             } else {
                 format!(
-                    "   {}/{}{} {}{}{}",
+                    "   {}/{}{}{}  {}{}{}",
                     theme.fg_active.fg(),
                     item.command,
-                    RESET,
+                    FG_CLOSE,
+                    "",
                     theme.fg_dim.fg(),
                     item.description,
-                    RESET,
+                    FG_CLOSE,
                 )
             }
         } else {
@@ -120,7 +125,7 @@ pub fn command_palette_widget(
             bc, b.vertical,
             padded,
             b.vertical,
-            RESET,
+            FG_CLOSE,
             " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
         ));
     }
@@ -132,14 +137,14 @@ pub fn command_palette_widget(
         theme.fg_active.fg(), theme.fg_dim.fg(),
         theme.fg_active.fg(), theme.fg_dim.fg(),
     );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, RESET), inner_w);
+    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
     result.push(format!(
         "{}{}{}{}{}{}{}",
         " ".repeat(x_pad),
         bc, b.vertical,
         padded_hints,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
     ));
 
@@ -150,7 +155,7 @@ pub fn command_palette_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_w),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + palette_w)),
     ));
 

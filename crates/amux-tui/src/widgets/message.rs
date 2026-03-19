@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, RESET};
+use crate::theme::{ThemeTokens, FG_CLOSE, BG_CLOSE};
 use crate::state::chat::{AgentMessage, MessageRole, TranscriptMode};
 
 /// Render a single message as lines
@@ -33,7 +33,7 @@ fn render_compact(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent:
             let status_colored = format_tool_status(status, theme);
             lines.push(format!(
                 "  {}\u{2699}{} {}{} {}",
-                theme.accent_assistant.fg(), RESET,
+                theme.accent_assistant.fg(), FG_CLOSE,
                 theme.fg_dim.fg(), name,
                 status_colored,
             ));
@@ -52,18 +52,19 @@ fn render_compact(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent:
     if let Some(first) = content_lines.first() {
         lines.push(format!(
             "  {}{}{} {}{}{}",
-            badge_color.bg(), badge, RESET,
-            theme.fg_active.fg(), first, RESET,
+            badge_color.bg(), badge, BG_CLOSE,
+            theme.fg_active.fg(), first, FG_CLOSE,
         ));
     }
 
     // Continuation lines with indent
     for line in content_lines.iter().skip(1) {
         lines.push(format!(
-            "{}{}{}",
+            "{}{}{}{}",
             " ".repeat(indent),
             theme.fg_active.fg(),
             line,
+            FG_CLOSE,
         ));
     }
 
@@ -73,12 +74,11 @@ fn render_compact(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent:
             let status = msg.tool_status.as_deref().unwrap_or("running");
             let status_colored = format_tool_status(status, theme);
             lines.push(format!(
-                "{}{}\u{2699}{} {}{} {}{}",
+                "{}{}\u{2699}{} {}{} {}",
                 " ".repeat(indent),
-                theme.accent_assistant.fg(), RESET,
+                theme.accent_assistant.fg(), FG_CLOSE,
                 theme.fg_dim.fg(), name,
                 status_colored,
-                RESET,
             ));
         }
     }
@@ -102,12 +102,11 @@ fn render_tools_only(msg: &AgentMessage, theme: &ThemeTokens, width: usize, _ind
         };
 
         lines.push(format!(
-            "  {}\u{2699}{} {}{:<16}{} {}{}{}",
-            theme.accent_assistant.fg(), RESET,
-            theme.fg_active.fg(), name, RESET,
+            "  {}\u{2699}{} {}{:<16}{} {}{}",
+            theme.accent_assistant.fg(), FG_CLOSE,
+            theme.fg_active.fg(), name, FG_CLOSE,
             status_colored,
-            if !args_short.is_empty() { format!("  {}{}{}", theme.fg_dim.fg(), args_short, RESET) } else { String::new() },
-            RESET,
+            if !args_short.is_empty() { format!("  {}{}{}", theme.fg_dim.fg(), args_short, FG_CLOSE) } else { String::new() },
         ));
     }
 }
@@ -119,22 +118,24 @@ fn render_full(msg: &AgentMessage, theme: &ThemeTokens, width: usize, indent: us
     // Show reasoning if present
     if let Some(reasoning) = &msg.reasoning {
         if !reasoning.is_empty() {
+            // Dark blue color for reasoning border
+            let dark_blue = crate::theme::Color(24);
             lines.push(format!(
-                "{}{}\u{25be} [-] Reasoning{}",
+                "{}{}\u{25be} \\[-] Reasoning{}",
                 " ".repeat(indent),
                 theme.fg_dim.fg(),
-                RESET,
+                FG_CLOSE,
             ));
             let reasoning_width = width.saturating_sub(indent + 2);
             for line in wrap_text(reasoning, reasoning_width) {
                 lines.push(format!(
                     "{}{}\u{2502}{} {}{}{}",
                     " ".repeat(indent),
-                    "\x1b[38;5;24m", // dark blue border
-                    RESET,
+                    dark_blue.fg(),
+                    FG_CLOSE,
                     theme.fg_dim.fg(),
                     line,
-                    RESET,
+                    FG_CLOSE,
                 ));
             }
         }
@@ -153,9 +154,9 @@ fn role_badge(role: MessageRole, theme: &ThemeTokens) -> (&'static str, crate::t
 
 fn format_tool_status(status: &str, theme: &ThemeTokens) -> String {
     match status {
-        "completed" | "done" | "success" => format!("{}\u{2713} done{}", theme.accent_success.fg(), RESET),
-        "error" | "failed" => format!("{}\u{2717} error{}", theme.accent_danger.fg(), RESET),
-        _ => format!("{}\u{28cb} running{}", theme.accent_secondary.fg(), RESET),
+        "completed" | "done" | "success" => format!("{}\u{2713} done{}", theme.accent_success.fg(), FG_CLOSE),
+        "error" | "failed" => format!("{}\u{2717} error{}", theme.accent_danger.fg(), FG_CLOSE),
+        _ => format!("{}\u{28cb} running{}", theme.accent_secondary.fg(), FG_CLOSE),
     }
 }
 
@@ -217,7 +218,7 @@ mod tests {
         };
         let lines = message_widget(&msg, TranscriptMode::Compact, &ThemeTokens::default(), 80);
         assert!(!lines.is_empty());
-        // Should contain USER badge (visible in the ANSI output)
+        // Should contain USER badge (visible in the markup output)
         let joined = lines.join("");
         assert!(joined.contains("USER"));
     }

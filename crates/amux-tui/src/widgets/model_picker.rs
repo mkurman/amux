@@ -1,6 +1,9 @@
-use crate::theme::{ThemeTokens, SHARP_BORDER, RESET};
+use crate::theme::{ThemeTokens, SHARP_BORDER, FG_CLOSE, BG_CLOSE};
 use crate::state::modal::ModalState;
 use crate::state::config::ConfigState;
+
+/// Black text color for highlighted items
+const BLACK_FG: &str = "[fg=rgb(0,0,0)]";
 
 /// Render the model picker overlay.
 /// Returns a full-screen Vec<String> (one entry per row) centered over the terminal.
@@ -20,7 +23,7 @@ pub fn model_picker_widget(
     // Size: ~45% width, dynamic height
     let list_h = if has_models { models.len().min(15) } else { 1 };
     let picker_w = (screen_width * 45 / 100).max(40).min(screen_width);
-    let picker_h = (list_h + 4).max(8).min(screen_height); // header + list + hints + borders
+    let picker_h = (list_h + 4).max(8).min(screen_height);
     let inner_w = picker_w.saturating_sub(2);
 
     let x_pad = (screen_width.saturating_sub(picker_w)) / 2;
@@ -45,7 +48,7 @@ pub fn model_picker_widget(
         title,
         super::repeat_char(b.horizontal, border_remaining.saturating_sub(2)),
         b.top_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -53,7 +56,6 @@ pub fn model_picker_widget(
     let active_model = config.model();
 
     if has_models {
-        // Show model list
         let visible_models: Vec<_> = models.iter().take(list_h).collect();
 
         for (i, model) in visible_models.iter().enumerate() {
@@ -61,29 +63,27 @@ pub fn model_picker_widget(
             let is_selected = i == cursor;
             let is_active = model.id == active_model || display_name == active_model;
 
-            // Optional context window annotation
             let ctx_str = model
                 .context_window
-                .map(|c| format!(" {}({}k ctx){}", theme.fg_dim.fg(), c / 1000, RESET))
+                .map(|c| format!(" {}({}k ctx){}", theme.fg_dim.fg(), c / 1000, FG_CLOSE))
                 .unwrap_or_default();
 
             let line = if is_selected {
-                // Selected: amber highlight
                 format!(
                     " {}{}> {}{}{}{}",
                     theme.accent_secondary.bg(),
-                    "\x1b[38;5;0m", // black text on amber
+                    BLACK_FG,
                     display_name,
-                    RESET,
+                    FG_CLOSE,
+                    BG_CLOSE,
                     ctx_str,
-                    " ".repeat(inner_w.saturating_sub(display_name.len() + 3)),
                 )
             } else if is_active && !active_model.is_empty() {
                 format!(
                     "  {}• {}{}{}",
                     theme.accent_secondary.fg(),
                     display_name,
-                    RESET,
+                    FG_CLOSE,
                     ctx_str,
                 )
             } else {
@@ -91,7 +91,7 @@ pub fn model_picker_widget(
                     "   {}{}{}{}",
                     theme.fg_active.fg(),
                     display_name,
-                    RESET,
+                    FG_CLOSE,
                     ctx_str,
                 )
             };
@@ -103,18 +103,17 @@ pub fn model_picker_widget(
                 bc, b.vertical,
                 padded,
                 b.vertical,
-                RESET,
+                FG_CLOSE,
                 " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
             ));
         }
 
-        // If there are more models than visible
         if models.len() > list_h {
             let more_line = format!(
                 "  {}... {} more models{}",
                 theme.fg_dim.fg(),
                 models.len() - list_h,
-                RESET,
+                FG_CLOSE,
             );
             let padded = super::pad_to_width(&more_line, inner_w);
             result.push(format!(
@@ -123,15 +122,14 @@ pub fn model_picker_widget(
                 bc, b.vertical,
                 padded,
                 b.vertical,
-                RESET,
+                FG_CLOSE,
                 " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
             ));
         }
     } else {
-        // No models fetched: show prompt
         let empty_line = format!(
             "  {}Press Enter to fetch models{}",
-            theme.fg_dim.fg(), RESET,
+            theme.fg_dim.fg(), FG_CLOSE,
         );
         let padded = super::pad_to_width(&empty_line, inner_w);
         result.push(format!(
@@ -140,7 +138,7 @@ pub fn model_picker_widget(
             bc, b.vertical,
             padded,
             b.vertical,
-            RESET,
+            FG_CLOSE,
             " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
         ));
     }
@@ -152,14 +150,14 @@ pub fn model_picker_widget(
         theme.fg_active.fg(), theme.fg_dim.fg(),
         theme.fg_active.fg(), theme.fg_dim.fg(),
     );
-    let padded_hints = super::pad_to_width(&format!("{}{}", hints, RESET), inner_w);
+    let padded_hints = super::pad_to_width(&format!("{}{}", hints, FG_CLOSE), inner_w);
     result.push(format!(
         "{}{}{}{}{}{}{}",
         " ".repeat(x_pad),
         bc, b.vertical,
         padded_hints,
         b.vertical,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -170,7 +168,7 @@ pub fn model_picker_widget(
         bc, b.bottom_left,
         super::repeat_char(b.horizontal, inner_w),
         b.bottom_right,
-        RESET,
+        FG_CLOSE,
         " ".repeat(screen_width.saturating_sub(x_pad + picker_w)),
     ));
 
@@ -262,7 +260,6 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = model_picker_widget(&modal, &config, &theme, 120, 40);
         let joined = lines.join("");
-        // The amber fg color should appear for the active-but-not-selected indicator
         assert!(joined.contains("GPT-4o"));
     }
 
@@ -270,7 +267,7 @@ mod tests {
     fn model_picker_navigation_moves_cursor() {
         let mut modal = ModalState::new();
         modal.reduce(ModalAction::Push(ModalKind::ModelPicker));
-        modal.reduce(ModalAction::Navigate(1)); // cursor = 1 → GPT-4o Mini
+        modal.reduce(ModalAction::Navigate(1));
         let mut config = ConfigState::new();
         config.reduce(ConfigAction::ModelsFetched(make_models()));
         let theme = ThemeTokens::default();
@@ -287,7 +284,6 @@ mod tests {
         let theme = ThemeTokens::default();
         let lines = model_picker_widget(&modal, &config, &theme, 120, 40);
         let joined = lines.join("");
-        // 128_000 / 1000 = 128 → "128k ctx"
         assert!(joined.contains("128k ctx"));
     }
 

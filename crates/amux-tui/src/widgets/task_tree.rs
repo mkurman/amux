@@ -1,4 +1,4 @@
-use crate::theme::{ThemeTokens, RESET};
+use crate::theme::{ThemeTokens, FG_CLOSE};
 use crate::state::task::{TaskState, TaskStatus, GoalRunStatus, HeartbeatOutcome};
 use crate::state::sidebar::SidebarState;
 use super::pad_to_width;
@@ -7,43 +7,43 @@ use super::pad_to_width;
 
 fn goal_run_status_dot(status: Option<GoalRunStatus>, theme: &ThemeTokens) -> String {
     match status {
-        Some(GoalRunStatus::Running) => format!("{}●{}", theme.accent_secondary.fg(), RESET),
-        Some(GoalRunStatus::Completed) => format!("{}●{}", theme.accent_success.fg(), RESET),
-        Some(GoalRunStatus::Failed) => format!("{}●{}", theme.accent_danger.fg(), RESET),
+        Some(GoalRunStatus::Running) => format!("{}●{}", theme.accent_secondary.fg(), FG_CLOSE),
+        Some(GoalRunStatus::Completed) => format!("{}●{}", theme.accent_success.fg(), FG_CLOSE),
+        Some(GoalRunStatus::Failed) => format!("{}●{}", theme.accent_danger.fg(), FG_CLOSE),
         Some(GoalRunStatus::Cancelled) | Some(GoalRunStatus::Pending) | None => {
-            format!("{}●{}", theme.fg_dim.fg(), RESET)
+            format!("{}●{}", theme.fg_dim.fg(), FG_CLOSE)
         }
     }
 }
 
 fn task_status_chip(status: Option<TaskStatus>, theme: &ThemeTokens) -> String {
     match status {
-        None | Some(TaskStatus::Queued) => format!("{}[ ]{}", theme.fg_dim.fg(), RESET),
-        Some(TaskStatus::InProgress) => format!("{}[~]{}", theme.accent_secondary.fg(), RESET),
-        Some(TaskStatus::Completed) => format!("{}[x]{}", theme.accent_success.fg(), RESET),
+        None | Some(TaskStatus::Queued) => format!("{}\\[ ]{}", theme.fg_dim.fg(), FG_CLOSE),
+        Some(TaskStatus::InProgress) => format!("{}\\[~]{}", theme.accent_secondary.fg(), FG_CLOSE),
+        Some(TaskStatus::Completed) => format!("{}\\[x]{}", theme.accent_success.fg(), FG_CLOSE),
         Some(TaskStatus::Failed) | Some(TaskStatus::FailedAnalyzing) => {
-            format!("{}[!]{}", theme.accent_danger.fg(), RESET)
+            format!("{}\\[!]{}", theme.accent_danger.fg(), FG_CLOSE)
         }
-        Some(TaskStatus::Blocked) => format!("{}[B]{}", theme.fg_dim.fg(), RESET),
+        Some(TaskStatus::Blocked) => format!("{}\\[B]{}", theme.fg_dim.fg(), FG_CLOSE),
         Some(TaskStatus::AwaitingApproval) => {
-            format!("{}[?]{}", theme.accent_primary.fg(), RESET)
+            format!("{}\\[?]{}", theme.accent_primary.fg(), FG_CLOSE)
         }
-        Some(TaskStatus::Cancelled) => format!("{}[C]{}", theme.fg_dim.fg(), RESET),
+        Some(TaskStatus::Cancelled) => format!("{}\\[C]{}", theme.fg_dim.fg(), FG_CLOSE),
     }
 }
 
 fn heartbeat_dot(outcome: Option<HeartbeatOutcome>, theme: &ThemeTokens) -> String {
     match outcome {
         Some(HeartbeatOutcome::Ok) | None => {
-            format!("{}●{}", theme.accent_success.fg(), RESET)
+            format!("{}●{}", theme.accent_success.fg(), FG_CLOSE)
         }
-        Some(HeartbeatOutcome::Warn) => format!("{}●{}", theme.accent_secondary.fg(), RESET),
-        Some(HeartbeatOutcome::Error) => format!("{}●{}", theme.accent_danger.fg(), RESET),
+        Some(HeartbeatOutcome::Warn) => format!("{}●{}", theme.accent_secondary.fg(), FG_CLOSE),
+        Some(HeartbeatOutcome::Error) => format!("{}●{}", theme.accent_danger.fg(), FG_CLOSE),
     }
 }
 
 fn separator_line(width: usize, theme: &ThemeTokens) -> String {
-    format!("{}{}{}", theme.fg_dim.fg(), "─".repeat(width), RESET)
+    format!("{}{}{}", theme.fg_dim.fg(), "─".repeat(width), FG_CLOSE)
 }
 
 // ── public widget ─────────────────────────────────────────────────────────────
@@ -72,31 +72,30 @@ pub fn task_tree_widget(
         let dot = goal_run_status_dot(run.status, theme);
         let status_label = match run.status {
             Some(GoalRunStatus::Running) => {
-                format!(" {}running{}", theme.accent_secondary.fg(), RESET)
+                format!(" {}running{}", theme.accent_secondary.fg(), FG_CLOSE)
             }
             Some(GoalRunStatus::Completed) => {
-                format!(" {}done{}", theme.accent_success.fg(), RESET)
+                format!(" {}done{}", theme.accent_success.fg(), FG_CLOSE)
             }
             Some(GoalRunStatus::Failed) => {
-                format!(" {}failed{}", theme.accent_danger.fg(), RESET)
+                format!(" {}failed{}", theme.accent_danger.fg(), FG_CLOSE)
             }
             Some(GoalRunStatus::Cancelled) => {
-                format!(" {}cancelled{}", theme.fg_dim.fg(), RESET)
+                format!(" {}cancelled{}", theme.fg_dim.fg(), FG_CLOSE)
             }
             Some(GoalRunStatus::Pending) | None => {
-                format!(" {}pending{}", theme.fg_dim.fg(), RESET)
+                format!(" {}pending{}", theme.fg_dim.fg(), FG_CLOSE)
             }
         };
 
         let header = format!(
-            "{}{}{} {} {} {}{}",
+            "{}{}{} {} {} {}",
             theme.fg_active.fg(),
             arrow,
-            RESET,
+            FG_CLOSE,
             run.title,
             dot,
             status_label,
-            RESET,
         );
         lines.push(pad_to_width(&header, width));
 
@@ -108,19 +107,19 @@ pub fn task_tree_widget(
             for step in &steps {
                 let chip = match step.status {
                     None | Some(GoalRunStatus::Pending) => {
-                        format!("{}[ ]{}", theme.fg_dim.fg(), RESET)
+                        format!("{}\\[ ]{}", theme.fg_dim.fg(), FG_CLOSE)
                     }
                     Some(GoalRunStatus::Running) => {
-                        format!("{}[~]{}", theme.accent_secondary.fg(), RESET)
+                        format!("{}\\[~]{}", theme.accent_secondary.fg(), FG_CLOSE)
                     }
                     Some(GoalRunStatus::Completed) => {
-                        format!("{}[x]{}", theme.accent_success.fg(), RESET)
+                        format!("{}\\[x]{}", theme.accent_success.fg(), FG_CLOSE)
                     }
                     Some(GoalRunStatus::Failed) => {
-                        format!("{}[!]{}", theme.accent_danger.fg(), RESET)
+                        format!("{}\\[!]{}", theme.accent_danger.fg(), FG_CLOSE)
                     }
                     Some(GoalRunStatus::Cancelled) => {
-                        format!("{}[C]{}", theme.fg_dim.fg(), RESET)
+                        format!("{}\\[C]{}", theme.fg_dim.fg(), FG_CLOSE)
                     }
                 };
                 let step_line =
@@ -145,7 +144,7 @@ pub fn task_tree_widget(
         let section_header = format!(
             "{}Standalone Tasks{}",
             theme.fg_dim.fg(),
-            RESET
+            FG_CLOSE
         );
         lines.push(pad_to_width(&section_header, width));
 
@@ -161,14 +160,14 @@ pub fn task_tree_widget(
 
     if !heartbeat_items.is_empty() {
         lines.push(pad_to_width(&separator_line(width, theme), width));
-        let hb_header = format!("{}♥ Heartbeat{}", theme.accent_danger.fg(), RESET);
+        let hb_header = format!("{}♥ Heartbeat{}", theme.accent_danger.fg(), FG_CLOSE);
         lines.push(pad_to_width(&hb_header, width));
 
         for item in heartbeat_items {
             let dot = heartbeat_dot(item.outcome, theme);
             let msg = item.message.as_deref().unwrap_or("OK");
             let warn = if matches!(item.outcome, Some(HeartbeatOutcome::Error)) {
-                format!(" {}!{}", theme.accent_danger.fg(), RESET)
+                format!(" {}!{}", theme.accent_danger.fg(), FG_CLOSE)
             } else {
                 String::new()
             };
@@ -178,7 +177,7 @@ pub fn task_tree_widget(
                 item.label,
                 theme.fg_dim.fg(),
                 msg,
-                RESET,
+                FG_CLOSE,
             );
             let hb_line = format!("{}{}", hb_line, warn);
             lines.push(pad_to_width(&hb_line, width));
@@ -187,7 +186,7 @@ pub fn task_tree_widget(
 
     // ── Empty state ───────────────────────────────────────────────────────────
     if lines.is_empty() {
-        let empty = format!(" {}No tasks{}", theme.fg_dim.fg(), RESET);
+        let empty = format!(" {}No tasks{}", theme.fg_dim.fg(), FG_CLOSE);
         lines.push(pad_to_width(&empty, width));
     }
 
@@ -342,9 +341,10 @@ mod tests {
         let theme = make_theme();
         let lines = task_tree_widget(&tasks, &sidebar, &theme, 60, 20);
         let combined = lines.join("\n");
-        assert!(combined.contains("[ ]"), "pending chip missing");
-        assert!(combined.contains("[x]"), "done chip missing");
-        assert!(combined.contains("[!]"), "failed chip missing");
+        // Escaped brackets: \[ ] \[x] \[!]
+        assert!(combined.contains("\\[ ]"), "pending chip missing");
+        assert!(combined.contains("\\[x]"), "done chip missing");
+        assert!(combined.contains("\\[!]"), "failed chip missing");
     }
 
     // ─── standalone tasks ──────────────────────────────────────────────────────
@@ -392,11 +392,8 @@ mod tests {
         let theme = make_theme();
         let lines = task_tree_widget(&tasks, &sidebar, &theme, 60, 20);
         let combined = lines.join("\n");
-        // Standalone section should show t2 but not t1 under standalone
         assert!(combined.contains("Standalone Tasks"));
         assert!(combined.contains("Standalone task"));
-        // "Linked task" should not appear since there's no matching goal run in the tree
-        // (no goal runs were added, so it won't appear in goal run zone either)
         assert!(!combined.contains("Linked task"), "linked task should not appear in standalone zone");
     }
 
@@ -446,7 +443,6 @@ mod tests {
         let theme = make_theme();
         let lines = task_tree_widget(&tasks, &sidebar, &theme, 60, 20);
         let combined = lines.join("\n");
-        // Error items get a "!" marker
         assert!(combined.contains("!"), "error heartbeat should show ! marker");
     }
 
@@ -455,13 +451,13 @@ mod tests {
     #[test]
     fn task_status_chips_all_variants() {
         let theme = make_theme();
-        assert!(task_status_chip(None, &theme).contains("[ ]"));
-        assert!(task_status_chip(Some(TaskStatus::Queued), &theme).contains("[ ]"));
-        assert!(task_status_chip(Some(TaskStatus::InProgress), &theme).contains("[~]"));
-        assert!(task_status_chip(Some(TaskStatus::Completed), &theme).contains("[x]"));
-        assert!(task_status_chip(Some(TaskStatus::Failed), &theme).contains("[!]"));
-        assert!(task_status_chip(Some(TaskStatus::Blocked), &theme).contains("[B]"));
-        assert!(task_status_chip(Some(TaskStatus::AwaitingApproval), &theme).contains("[?]"));
+        assert!(task_status_chip(None, &theme).contains("\\[ ]"));
+        assert!(task_status_chip(Some(TaskStatus::Queued), &theme).contains("\\[ ]"));
+        assert!(task_status_chip(Some(TaskStatus::InProgress), &theme).contains("\\[~]"));
+        assert!(task_status_chip(Some(TaskStatus::Completed), &theme).contains("\\[x]"));
+        assert!(task_status_chip(Some(TaskStatus::Failed), &theme).contains("\\[!]"));
+        assert!(task_status_chip(Some(TaskStatus::Blocked), &theme).contains("\\[B]"));
+        assert!(task_status_chip(Some(TaskStatus::AwaitingApproval), &theme).contains("\\[?]"));
     }
 
     // ─── height truncation / padding ──────────────────────────────────────────
@@ -469,7 +465,6 @@ mod tests {
     #[test]
     fn task_tree_truncates_to_height() {
         let mut tasks = TaskState::new();
-        // Add many items
         tasks.reduce(TaskAction::GoalRunListReceived(
             (0..20)
                 .map(|i| GoalRun {

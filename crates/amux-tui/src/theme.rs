@@ -3,24 +3,73 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color(pub u8); // ANSI-256 index
 
+/// Closing tag for foreground color markup
+pub const FG_CLOSE: &str = "[/fg]";
+
+/// Closing tag for background color markup
+pub const BG_CLOSE: &str = "[/bg]";
+
+/// Empty string replacing the old ANSI RESET constant.
+/// Use FG_CLOSE / BG_CLOSE to close specific tags instead.
+pub const RESET: &str = "";
+
 impl Color {
     pub const RESET: Self = Self(0);
 
-    /// Emit ANSI foreground escape sequence
+    /// Emit ftui markup opening tag for foreground color
     pub fn fg(self) -> String {
         if self.0 == 0 {
-            "\x1b[0m".to_string()
+            FG_CLOSE.to_string()
         } else {
-            format!("\x1b[38;5;{}m", self.0)
+            let (r, g, b) = ansi256_to_rgb(self.0);
+            format!("[fg=rgb({},{},{})]", r, g, b)
         }
     }
 
-    /// Emit ANSI background escape sequence
+    /// Emit ftui markup opening tag for background color
     pub fn bg(self) -> String {
         if self.0 == 0 {
-            "\x1b[0m".to_string()
+            BG_CLOSE.to_string()
         } else {
-            format!("\x1b[48;5;{}m", self.0)
+            let (r, g, b) = ansi256_to_rgb(self.0);
+            format!("[bg=rgb({},{},{})]", r, g, b)
+        }
+    }
+}
+
+/// Convert ANSI-256 color index to RGB values
+fn ansi256_to_rgb(idx: u8) -> (u8, u8, u8) {
+    match idx {
+        // Standard colors (0-15) - approximate common terminal colors
+        0 => (0, 0, 0),
+        1 => (170, 0, 0),
+        2 => (0, 170, 0),
+        3 => (170, 170, 0),
+        4 => (0, 0, 170),
+        5 => (170, 0, 170),
+        6 => (0, 170, 170),
+        7 => (170, 170, 170),
+        8 => (85, 85, 85),
+        9 => (255, 85, 85),
+        10 => (85, 255, 85),
+        11 => (255, 255, 85),
+        12 => (85, 85, 255),
+        13 => (255, 85, 255),
+        14 => (85, 255, 255),
+        15 => (255, 255, 255),
+        // 216-color cube (16-231)
+        16..=231 => {
+            let idx = idx - 16;
+            let r = (idx / 36) % 6;
+            let g = (idx / 6) % 6;
+            let b = idx % 6;
+            let to_val = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
+            (to_val(r), to_val(g), to_val(b))
+        }
+        // Grayscale (232-255)
+        232..=255 => {
+            let v = 8 + 10 * (idx - 232);
+            (v, v, v)
         }
     }
 }
@@ -80,9 +129,6 @@ pub const SHARP_BORDER: BorderSet = BorderSet {
     vertical: '║',
 };
 
-/// Reset all ANSI attributes
-pub const RESET: &str = "\x1b[0m";
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +146,53 @@ mod tests {
         assert_eq!(ROUNDED_BORDER.top_right, '╮');
         assert_eq!(SHARP_BORDER.top_left, '╔');
         assert_eq!(SHARP_BORDER.bottom_right, '╝');
+    }
+
+    #[test]
+    fn color_fg_emits_markup_tag() {
+        let c = Color(75);
+        let tag = c.fg();
+        assert!(tag.starts_with("[fg=rgb("));
+        assert!(tag.ends_with(")]"));
+    }
+
+    #[test]
+    fn color_bg_emits_markup_tag() {
+        let c = Color(75);
+        let tag = c.bg();
+        assert!(tag.starts_with("[bg=rgb("));
+        assert!(tag.ends_with(")]"));
+    }
+
+    #[test]
+    fn color_reset_fg_emits_close_tag() {
+        let c = Color::RESET;
+        assert_eq!(c.fg(), "[/fg]");
+    }
+
+    #[test]
+    fn color_reset_bg_emits_close_tag() {
+        let c = Color::RESET;
+        assert_eq!(c.bg(), "[/bg]");
+    }
+
+    #[test]
+    fn ansi256_standard_colors() {
+        assert_eq!(ansi256_to_rgb(0), (0, 0, 0));
+        assert_eq!(ansi256_to_rgb(15), (255, 255, 255));
+    }
+
+    #[test]
+    fn ansi256_cube_colors() {
+        // Color 16 = first cube color (0,0,0)
+        assert_eq!(ansi256_to_rgb(16), (0, 0, 0));
+        // Color 231 = last cube color (5,5,5) -> (255,255,255)
+        assert_eq!(ansi256_to_rgb(231), (255, 255, 255));
+    }
+
+    #[test]
+    fn ansi256_grayscale() {
+        assert_eq!(ansi256_to_rgb(232), (8, 8, 8));
+        assert_eq!(ansi256_to_rgb(255), (238, 238, 238));
     }
 }

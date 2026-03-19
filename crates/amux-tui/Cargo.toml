@@ -22,5 +22,9 @@ tokio-util = { workspace = true }
 # TUI dependencies
 ftui-runtime = { version = "0.2.1", features = ["crossterm-compat"] }
 ftui-core = "0.2.1"
+ftui-text = { version = "0.2.1", features = ["markup"] }
+ftui-render = "0.2.1"
+ftui-style = "0.2.1"
+unicode-segmentation = "1"
 web-time = "1"
 futures = { workspace = true }
