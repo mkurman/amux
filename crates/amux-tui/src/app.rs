@@ -224,12 +224,14 @@ impl TuiModel {
         }
 
         // Render footer
+        let has_error = self.status_line.starts_with("Error");
         widgets::footer::render(
             frame,
             chunks[2],
             &self.input,
             &self.theme,
-            &self.status_line,
+            self.connected,
+            has_error,
             self.focus == FocusArea::Input,
         );
 

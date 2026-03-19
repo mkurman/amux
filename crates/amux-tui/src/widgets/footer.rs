@@ -10,7 +10,8 @@ pub fn render(
     area: Rect,
     input: &InputState,
     theme: &ThemeTokens,
-    status_line: &str,
+    connected: bool,
+    has_error: bool,
     focused: bool,
 ) {
     let border_style = if focused {
@@ -50,27 +51,35 @@ pub fn render(
         Span::raw(cursor),
     ]);
 
-    // Line 2: status or hints
-    let line2 = if !status_line.is_empty() {
-        Line::from(vec![
-            Span::raw(" "),
-            Span::styled(status_line, theme.accent_success),
-        ])
+    // Line 2: status dots + keyboard hints
+    let mut spans = vec![Span::raw(" ")];
+
+    // Daemon connection status (always shown)
+    if connected {
+        spans.push(Span::styled("\u{25cf}", theme.accent_success)); // green ●
+        spans.push(Span::styled(" daemon  ", theme.fg_dim));
     } else {
-        Line::from(vec![
-            Span::raw(" "),
-            Span::styled("tab", theme.fg_active),
-            Span::styled(":focus  ", theme.fg_dim),
-            Span::styled("ctrl+p", theme.fg_active),
-            Span::styled(":commands  ", theme.fg_dim),
-            Span::styled("ctrl+t", theme.fg_active),
-            Span::styled(":threads  ", theme.fg_dim),
-            Span::styled("/", theme.fg_active),
-            Span::styled(":slash  ", theme.fg_dim),
-            Span::styled("q", theme.fg_active),
-            Span::styled(":quit", theme.fg_dim),
-        ])
-    };
+        spans.push(Span::styled("\u{25cf}", theme.accent_danger)); // red ●
+        spans.push(Span::styled(" daemon  ", theme.fg_dim));
+    }
+
+    // Error indicator (shown only when there's an error)
+    if has_error {
+        spans.push(Span::styled("\u{25cf}", theme.accent_danger)); // red ●
+        spans.push(Span::styled(" error  ", theme.fg_dim));
+    }
+
+    // Keyboard hints
+    spans.push(Span::styled("tab", theme.fg_active));
+    spans.push(Span::styled(":focus  ", theme.fg_dim));
+    spans.push(Span::styled("ctrl+p", theme.fg_active));
+    spans.push(Span::styled(":cmd  ", theme.fg_dim));
+    spans.push(Span::styled("/", theme.fg_active));
+    spans.push(Span::styled(":slash  ", theme.fg_dim));
+    spans.push(Span::styled("q", theme.fg_active));
+    spans.push(Span::styled(":quit", theme.fg_dim));
+
+    let line2 = Line::from(spans);
 
     let paragraph = Paragraph::new(vec![input_line, line2]);
     frame.render_widget(paragraph, inner);
@@ -84,7 +93,6 @@ mod tests {
     fn footer_handles_empty_state() {
         let input = InputState::new();
         let _theme = ThemeTokens::default();
-        // InputState starts in Insert mode
         assert_eq!(input.mode(), InputMode::Insert);
     }
 }
