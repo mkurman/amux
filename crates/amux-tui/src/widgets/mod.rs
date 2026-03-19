@@ -11,9 +11,9 @@ pub mod subagents;
 pub mod command_palette;
 pub mod approval;
 pub mod thread_picker;
-// pub mod settings;
-// pub mod provider_picker;
-// pub mod model_picker;
+pub mod settings;
+pub mod provider_picker;
+pub mod model_picker;
 
 // Shared utilities
 

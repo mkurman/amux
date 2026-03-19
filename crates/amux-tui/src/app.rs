@@ -414,6 +414,33 @@ impl TuiModel {
         _modifiers: Modifiers,
         kind: modal::ModalKind,
     ) -> Cmd<Msg> {
+        // Settings modal: Tab cycles tabs, Esc closes
+        if kind == modal::ModalKind::Settings {
+            match code {
+                KeyCode::Tab => {
+                    let all = SettingsTab::all();
+                    let current = self.settings.active_tab();
+                    let next_idx = all.iter().position(|&t| t == current)
+                        .map(|i| (i + 1) % all.len())
+                        .unwrap_or(0);
+                    self.settings.reduce(SettingsAction::SwitchTab(all[next_idx]));
+                    return Cmd::none();
+                }
+                KeyCode::BackTab => {
+                    let all = SettingsTab::all();
+                    let current = self.settings.active_tab();
+                    let prev_idx = all.iter().position(|&t| t == current)
+                        .map(|i| if i == 0 { all.len() - 1 } else { i - 1 })
+                        .unwrap_or(0);
+                    self.settings.reduce(SettingsAction::SwitchTab(all[prev_idx]));
+                    return Cmd::none();
+                }
+                _ => {
+                    // fall through to generic Esc handling below
+                }
+            }
+        }
+
         // Approval modal has special single-key handling
         if kind == modal::ModalKind::ApprovalOverlay {
             match code {
@@ -672,6 +699,21 @@ impl StringModel for TuiModel {
                 crate::state::modal::ModalKind::ApprovalOverlay => {
                     lines = crate::widgets::approval::approval_widget(
                         &self.approval, &self.theme, w, self.height as usize,
+                    );
+                }
+                crate::state::modal::ModalKind::Settings => {
+                    lines = crate::widgets::settings::settings_widget(
+                        &self.settings, &self.config, &self.theme, w, self.height as usize,
+                    );
+                }
+                crate::state::modal::ModalKind::ProviderPicker => {
+                    lines = crate::widgets::provider_picker::provider_picker_widget(
+                        &self.modal, &self.config, &self.theme, w, self.height as usize,
+                    );
+                }
+                crate::state::modal::ModalKind::ModelPicker => {
+                    lines = crate::widgets::model_picker::model_picker_widget(
+                        &self.modal, &self.config, &self.theme, w, self.height as usize,
                     );
                 }
                 // Other modals will be added in later tasks
