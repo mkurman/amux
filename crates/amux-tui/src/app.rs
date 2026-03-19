@@ -800,8 +800,16 @@ impl TuiModel {
                 if let Some(&provider) = providers.get(cursor) {
                     self.config
                         .reduce(config::ConfigAction::SetProvider(provider.to_string()));
+                    // Repopulate models for new provider
+                    let models = known_models_for_provider(provider);
+                    self.config
+                        .reduce(config::ConfigAction::ModelsFetched(models));
+                    // Auto-select first model
+                    if let Some(first) = known_models_for_provider(provider).first() {
+                        self.config
+                            .reduce(config::ConfigAction::SetModel(first.id.clone()));
+                    }
                     self.status_line = format!("Provider: {}", provider);
-                    // Sync to daemon
                     if let Ok(json) = serde_json::to_string(&serde_json::json!({
                         "provider": provider,
                     })) {
@@ -1235,30 +1243,59 @@ fn convert_heartbeat(h: crate::wire::HeartbeatItem) -> task::HeartbeatItem {
 fn known_models_for_provider(provider: &str) -> Vec<config::FetchedModel> {
     let models: &[(&str, &str, u32)] = match provider {
         "openai" => &[
+            ("gpt-4.1", "GPT-4.1", 1_000_000),
+            ("gpt-4.1-mini", "GPT-4.1 Mini", 1_000_000),
+            ("gpt-4.1-nano", "GPT-4.1 Nano", 1_000_000),
+            ("o3", "o3", 200_000),
+            ("o3-mini", "o3 Mini", 200_000),
+            ("o4-mini", "o4 Mini", 200_000),
             ("gpt-4o", "GPT-4o", 128_000),
             ("gpt-4o-mini", "GPT-4o Mini", 128_000),
-            ("gpt-4-turbo", "GPT-4 Turbo", 128_000),
-            ("o1", "o1", 200_000),
-            ("o1-mini", "o1 Mini", 128_000),
-            ("o3", "o3", 200_000),
-            ("gpt-3.5-turbo", "GPT-3.5 Turbo", 16_384),
         ],
         "anthropic" => &[
             ("claude-opus-4-6", "Claude Opus 4.6", 1_000_000),
             ("claude-sonnet-4-6", "Claude Sonnet 4.6", 200_000),
             ("claude-haiku-4-5-20251001", "Claude Haiku 4.5", 200_000),
-            ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet", 200_000),
         ],
         "groq" => &[
             ("llama-3.3-70b-versatile", "Llama 3.3 70B", 128_000),
-            ("mixtral-8x7b-32768", "Mixtral 8x7B", 32_768),
             ("llama-3.1-8b-instant", "Llama 3.1 8B", 131_072),
+            ("gemma2-9b-it", "Gemma 2 9B", 8_192),
         ],
         "ollama" => &[
             ("llama3.3", "Llama 3.3", 128_000),
             ("qwen2.5-coder", "Qwen 2.5 Coder", 32_768),
             ("deepseek-r1", "DeepSeek R1", 64_000),
             ("mistral", "Mistral", 32_768),
+        ],
+        "together" => &[
+            ("meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B", 128_000),
+            ("deepseek-ai/DeepSeek-R1", "DeepSeek R1", 64_000),
+            ("Qwen/Qwen2.5-72B-Instruct-Turbo", "Qwen 2.5 72B", 32_768),
+        ],
+        "deepinfra" => &[
+            ("meta-llama/Llama-3.3-70B-Instruct", "Llama 3.3 70B", 128_000),
+            ("Qwen/Qwen2.5-Coder-32B-Instruct", "Qwen 2.5 Coder 32B", 32_768),
+        ],
+        "zai" => &[
+            ("glm-4-plus", "GLM-4 Plus", 128_000),
+            ("glm-4-air", "GLM-4 Air", 128_000),
+            ("glm-4-flash", "GLM-4 Flash", 128_000),
+        ],
+        "kimi" => &[
+            ("moonshot-v1-128k", "Moonshot v1 128K", 128_000),
+            ("moonshot-v1-32k", "Moonshot v1 32K", 32_768),
+        ],
+        "qwen" => &[
+            ("qwen-max", "Qwen Max", 32_768),
+            ("qwen-plus", "Qwen Plus", 131_072),
+            ("qwen-turbo", "Qwen Turbo", 131_072),
+        ],
+        "openrouter" => &[
+            ("anthropic/claude-opus-4-6", "Claude Opus 4.6", 1_000_000),
+            ("openai/gpt-4.1", "GPT-4.1", 1_000_000),
+            ("google/gemini-2.5-pro", "Gemini 2.5 Pro", 1_000_000),
+            ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B", 128_000),
         ],
         _ => &[],
     };
