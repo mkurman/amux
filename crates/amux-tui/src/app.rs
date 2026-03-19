@@ -147,6 +147,11 @@ impl TuiModel {
             "tavily_api_key": &self.config.tavily_api_key,
             "search_max_results": self.config.search_max_results,
             "search_timeout_secs": self.config.search_timeout_secs,
+            "enable_streaming": self.config.enable_streaming,
+            "max_tool_loops": self.config.max_tool_loops,
+            "max_retries": self.config.max_retries,
+            "retry_delay_ms": self.config.retry_delay_ms,
+            "context_budget_tokens": self.config.context_budget_tokens,
             "gateway": {
                 "enabled": self.config.gateway_enabled,
                 "command_prefix": &self.config.gateway_prefix,
@@ -238,6 +243,28 @@ impl TuiModel {
         self.config.search_max_results = json.get("searchMaxResults").and_then(|v| v.as_u64()).unwrap_or(8) as u32;
         self.config.search_timeout_secs = json.get("searchTimeoutSeconds").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
 
+        // Chat settings
+        self.config.enable_streaming = json.get("enableStreaming").and_then(|v| v.as_bool()).unwrap_or(true);
+        self.config.enable_conversation_memory = json.get("enableConversationMemory").and_then(|v| v.as_bool()).unwrap_or(true);
+        self.config.enable_honcho_memory = get_bool("enableHonchoMemory");
+        self.config.honcho_api_key = get_str("honchoApiKey");
+        self.config.honcho_base_url = get_str("honchoBaseUrl");
+        self.config.honcho_workspace_id = {
+            let ws = get_str("honchoWorkspaceId");
+            if ws.is_empty() { "tamux".to_string() } else { ws }
+        };
+
+        // Advanced settings
+        self.config.auto_compact_context = json.get("autoCompactContext").and_then(|v| v.as_bool()).unwrap_or(true);
+        self.config.max_context_messages = json.get("maxContextMessages").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
+        self.config.max_tool_loops = json.get("maxToolLoops").and_then(|v| v.as_u64()).unwrap_or(25) as u32;
+        self.config.max_retries = json.get("maxRetries").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
+        self.config.retry_delay_ms = json.get("retryDelayMs").and_then(|v| v.as_u64()).unwrap_or(2000) as u32;
+        self.config.context_budget_tokens = json.get("contextBudgetTokens").and_then(|v| v.as_u64()).unwrap_or(100000) as u32;
+        self.config.compact_threshold_pct = json.get("compactThresholdPercent").and_then(|v| v.as_u64()).unwrap_or(80) as u32;
+        self.config.keep_recent_on_compact = json.get("keepRecentOnCompaction").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
+        self.config.bash_timeout_secs = json.get("bashTimeoutSeconds").and_then(|v| v.as_u64()).unwrap_or(30) as u32;
+
         // Gateway config (from settings.json — different file)
         let settings_path = format!("{}/.tamux/settings.json", home);
         if let Ok(settings_data) = std::fs::read_to_string(&settings_path) {
@@ -305,6 +332,25 @@ impl TuiModel {
         json["tavilyApiKey"] = serde_json::Value::String(self.config.tavily_api_key.clone());
         json["searchMaxResults"] = serde_json::Value::Number(self.config.search_max_results.into());
         json["searchTimeoutSeconds"] = serde_json::Value::Number(self.config.search_timeout_secs.into());
+
+        // Chat settings
+        json["enableStreaming"] = serde_json::Value::Bool(self.config.enable_streaming);
+        json["enableConversationMemory"] = serde_json::Value::Bool(self.config.enable_conversation_memory);
+        json["enableHonchoMemory"] = serde_json::Value::Bool(self.config.enable_honcho_memory);
+        json["honchoApiKey"] = serde_json::Value::String(self.config.honcho_api_key.clone());
+        json["honchoBaseUrl"] = serde_json::Value::String(self.config.honcho_base_url.clone());
+        json["honchoWorkspaceId"] = serde_json::Value::String(self.config.honcho_workspace_id.clone());
+
+        // Advanced settings
+        json["autoCompactContext"] = serde_json::Value::Bool(self.config.auto_compact_context);
+        json["maxContextMessages"] = serde_json::Value::Number(self.config.max_context_messages.into());
+        json["maxToolLoops"] = serde_json::Value::Number(self.config.max_tool_loops.into());
+        json["maxRetries"] = serde_json::Value::Number(self.config.max_retries.into());
+        json["retryDelayMs"] = serde_json::Value::Number(self.config.retry_delay_ms.into());
+        json["contextBudgetTokens"] = serde_json::Value::Number(self.config.context_budget_tokens.into());
+        json["compactThresholdPercent"] = serde_json::Value::Number(self.config.compact_threshold_pct.into());
+        json["keepRecentOnCompaction"] = serde_json::Value::Number(self.config.keep_recent_on_compact.into());
+        json["bashTimeoutSeconds"] = serde_json::Value::Number(self.config.bash_timeout_secs.into());
 
         // Update per-provider config block for the active provider
         let provider_config = serde_json::json!({
@@ -992,6 +1038,49 @@ impl TuiModel {
                                     self.config.search_timeout_secs = n.clamp(3, 120);
                                 }
                             }
+                            "honcho_api_key" => self.config.honcho_api_key = value,
+                            "honcho_base_url" => self.config.honcho_base_url = value,
+                            "honcho_workspace_id" => self.config.honcho_workspace_id = value,
+                            "max_context_messages" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.max_context_messages = n.clamp(10, 500);
+                                }
+                            }
+                            "max_tool_loops" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.max_tool_loops = n.clamp(0, 1000);
+                                }
+                            }
+                            "max_retries" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.max_retries = n.clamp(0, 10);
+                                }
+                            }
+                            "retry_delay_ms" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.retry_delay_ms = n.clamp(100, 60000);
+                                }
+                            }
+                            "context_budget_tokens" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.context_budget_tokens = n.clamp(10000, 500000);
+                                }
+                            }
+                            "compact_threshold_pct" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.compact_threshold_pct = n.clamp(50, 95);
+                                }
+                            }
+                            "keep_recent_on_compact" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.keep_recent_on_compact = n.clamp(1, 50);
+                                }
+                            }
+                            "bash_timeout_secs" => {
+                                if let Ok(n) = value.parse::<u32>() {
+                                    self.config.bash_timeout_secs = n.clamp(5, 300);
+                                }
+                            }
                             "agent_name" => {
                                 if let Some(ref mut raw) = self.config.agent_config_raw {
                                     raw["agent_name"] =
@@ -1161,6 +1250,52 @@ impl TuiModel {
                             let current = self.config.search_timeout_secs.to_string();
                             self.settings.start_editing("search_timeout", &current);
                         }
+                        // Chat tab inline text edits
+                        "honcho_api_key" => {
+                            let current = self.config.honcho_api_key.clone();
+                            self.settings.start_editing("honcho_api_key", &current);
+                        }
+                        "honcho_base_url" => {
+                            let current = self.config.honcho_base_url.clone();
+                            self.settings.start_editing("honcho_base_url", &current);
+                        }
+                        "honcho_workspace_id" => {
+                            let current = self.config.honcho_workspace_id.clone();
+                            self.settings.start_editing("honcho_workspace_id", &current);
+                        }
+                        // Advanced tab numeric edits
+                        "max_context_messages" => {
+                            let current = self.config.max_context_messages.to_string();
+                            self.settings.start_editing("max_context_messages", &current);
+                        }
+                        "max_tool_loops" => {
+                            let current = self.config.max_tool_loops.to_string();
+                            self.settings.start_editing("max_tool_loops", &current);
+                        }
+                        "max_retries" => {
+                            let current = self.config.max_retries.to_string();
+                            self.settings.start_editing("max_retries", &current);
+                        }
+                        "retry_delay_ms" => {
+                            let current = self.config.retry_delay_ms.to_string();
+                            self.settings.start_editing("retry_delay_ms", &current);
+                        }
+                        "context_budget_tokens" => {
+                            let current = self.config.context_budget_tokens.to_string();
+                            self.settings.start_editing("context_budget_tokens", &current);
+                        }
+                        "compact_threshold_pct" => {
+                            let current = self.config.compact_threshold_pct.to_string();
+                            self.settings.start_editing("compact_threshold_pct", &current);
+                        }
+                        "keep_recent_on_compact" => {
+                            let current = self.config.keep_recent_on_compact.to_string();
+                            self.settings.start_editing("keep_recent_on_compact", &current);
+                        }
+                        "bash_timeout_secs" => {
+                            let current = self.config.bash_timeout_secs.to_string();
+                            self.settings.start_editing("bash_timeout_secs", &current);
+                        }
                         // Agent tab inline text edits
                         "agent_name" => {
                             let current = if let Some(raw) = self.config.agent_config_raw.as_ref() {
@@ -1197,6 +1332,22 @@ impl TuiModel {
                         }
                         "web_search_enabled" => {
                             self.config.tool_web_search = !self.config.tool_web_search;
+                            self.sync_config_to_daemon();
+                        }
+                        "enable_streaming" => {
+                            self.config.enable_streaming = !self.config.enable_streaming;
+                            self.sync_config_to_daemon();
+                        }
+                        "enable_conversation_memory" => {
+                            self.config.enable_conversation_memory = !self.config.enable_conversation_memory;
+                            self.sync_config_to_daemon();
+                        }
+                        "enable_honcho_memory" => {
+                            self.config.enable_honcho_memory = !self.config.enable_honcho_memory;
+                            self.sync_config_to_daemon();
+                        }
+                        "auto_compact_context" => {
+                            self.config.auto_compact_context = !self.config.auto_compact_context;
                             self.sync_config_to_daemon();
                         }
                         f if f.starts_with("tool_") => {

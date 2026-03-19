@@ -71,6 +71,25 @@ pub struct ConfigState {
     pub whatsapp_allowed_contacts: String,
     pub whatsapp_token: String,
     pub whatsapp_phone_id: String,
+
+    // Chat settings
+    pub enable_streaming: bool,
+    pub enable_conversation_memory: bool,
+    pub enable_honcho_memory: bool,
+    pub honcho_api_key: String,
+    pub honcho_base_url: String,
+    pub honcho_workspace_id: String,
+
+    // Advanced settings
+    pub auto_compact_context: bool,
+    pub max_context_messages: u32,
+    pub max_tool_loops: u32,
+    pub max_retries: u32,
+    pub retry_delay_ms: u32,
+    pub context_budget_tokens: u32,
+    pub compact_threshold_pct: u32,
+    pub keep_recent_on_compact: u32,
+    pub bash_timeout_secs: u32,
 }
 
 impl ConfigState {
@@ -108,6 +127,21 @@ impl ConfigState {
             whatsapp_allowed_contacts: String::new(),
             whatsapp_token: String::new(),
             whatsapp_phone_id: String::new(),
+            enable_streaming: true,
+            enable_conversation_memory: true,
+            enable_honcho_memory: false,
+            honcho_api_key: String::new(),
+            honcho_base_url: String::new(),
+            honcho_workspace_id: "tamux".to_string(),
+            auto_compact_context: true,
+            max_context_messages: 100,
+            max_tool_loops: 25,
+            max_retries: 3,
+            retry_delay_ms: 2000,
+            context_budget_tokens: 100000,
+            compact_threshold_pct: 80,
+            keep_recent_on_compact: 10,
+            bash_timeout_secs: 30,
         }
     }
 

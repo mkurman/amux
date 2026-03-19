@@ -7,9 +7,10 @@ pub enum SettingsTab {
     Provider,
     Tools,
     WebSearch,
-    Reasoning,
+    Chat,
     Gateway,
     Agent,
+    Advanced,
 }
 
 impl SettingsTab {
@@ -17,9 +18,10 @@ impl SettingsTab {
         SettingsTab::Provider,
         SettingsTab::Tools,
         SettingsTab::WebSearch,
-        SettingsTab::Reasoning,
+        SettingsTab::Chat,
         SettingsTab::Gateway,
         SettingsTab::Agent,
+        SettingsTab::Advanced,
     ];
 
     pub fn all() -> &'static [SettingsTab] {
@@ -142,8 +144,13 @@ impl SettingsState {
                 6 => "search_timeout",
                 _ => "",
             },
-            SettingsTab::Reasoning => match self.field_cursor {
-                0 => "reasoning_effort",
+            SettingsTab::Chat => match self.field_cursor {
+                0 => "enable_streaming",
+                1 => "enable_conversation_memory",
+                2 => "enable_honcho_memory",
+                3 => "honcho_api_key",
+                4 => "honcho_base_url",
+                5 => "honcho_workspace_id",
                 _ => "",
             },
             SettingsTab::Gateway => match self.field_cursor {
@@ -167,6 +174,18 @@ impl SettingsState {
                 2 => "backend",
                 _ => "",
             },
+            SettingsTab::Advanced => match self.field_cursor {
+                0 => "auto_compact_context",
+                1 => "max_context_messages",
+                2 => "max_tool_loops",
+                3 => "max_retries",
+                4 => "retry_delay_ms",
+                5 => "context_budget_tokens",
+                6 => "compact_threshold_pct",
+                7 => "keep_recent_on_compact",
+                8 => "bash_timeout_secs",
+                _ => "",
+            },
         }
     }
 
@@ -176,9 +195,10 @@ impl SettingsState {
             SettingsTab::Provider => 5,
             SettingsTab::Tools => 7,
             SettingsTab::WebSearch => 7,
-            SettingsTab::Reasoning => 1,
+            SettingsTab::Chat => 6,
             SettingsTab::Gateway => 12,
             SettingsTab::Agent => 3,
+            SettingsTab::Advanced => 9,
         }
     }
 
@@ -445,8 +465,8 @@ mod tests {
     }
 
     #[test]
-    fn all_tabs_covers_six_variants() {
-        assert_eq!(SettingsTab::all().len(), 6);
+    fn all_tabs_covers_seven_variants() {
+        assert_eq!(SettingsTab::all().len(), 7);
     }
 
     #[test]
@@ -584,14 +604,51 @@ mod tests {
     }
 
     #[test]
-    fn current_field_name_reasoning_tab() {
+    fn current_field_name_chat_tab() {
         let mut state = SettingsState::new();
-        state.reduce(SettingsAction::SwitchTab(SettingsTab::Reasoning));
-        assert_eq!(state.current_field_name(), "reasoning_effort");
-        // Only 1 field, can't navigate past it
+        state.reduce(SettingsAction::SwitchTab(SettingsTab::Chat));
+        assert_eq!(state.current_field_name(), "enable_streaming");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "enable_conversation_memory");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "enable_honcho_memory");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "honcho_api_key");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "honcho_base_url");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "honcho_workspace_id");
+        // Only 6 fields, can't navigate past it
         state.reduce(SettingsAction::NavigateField(5));
-        assert_eq!(state.current_field_name(), "reasoning_effort");
-        assert_eq!(state.field_cursor(), 0);
+        assert_eq!(state.current_field_name(), "honcho_workspace_id");
+        assert_eq!(state.field_cursor(), 5);
+    }
+
+    #[test]
+    fn current_field_name_advanced_tab() {
+        let mut state = SettingsState::new();
+        state.reduce(SettingsAction::SwitchTab(SettingsTab::Advanced));
+        assert_eq!(state.current_field_name(), "auto_compact_context");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "max_context_messages");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "max_tool_loops");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "max_retries");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "retry_delay_ms");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "context_budget_tokens");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "compact_threshold_pct");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "keep_recent_on_compact");
+        state.reduce(SettingsAction::NavigateField(1));
+        assert_eq!(state.current_field_name(), "bash_timeout_secs");
+        // Only 9 fields, can't navigate past it
+        state.reduce(SettingsAction::NavigateField(5));
+        assert_eq!(state.current_field_name(), "bash_timeout_secs");
+        assert_eq!(state.field_cursor(), 8);
     }
 
     #[test]
@@ -602,12 +659,14 @@ mod tests {
         assert_eq!(state.field_count(), 7); // 7 tool checkboxes
         state.reduce(SettingsAction::SwitchTab(SettingsTab::WebSearch));
         assert_eq!(state.field_count(), 7); // enabled, provider, 3 keys, max_results, timeout
-        state.reduce(SettingsAction::SwitchTab(SettingsTab::Reasoning));
-        assert_eq!(state.field_count(), 1); // effort only
+        state.reduce(SettingsAction::SwitchTab(SettingsTab::Chat));
+        assert_eq!(state.field_count(), 6); // streaming, conv memory, honcho toggle, key, url, workspace
         state.reduce(SettingsAction::SwitchTab(SettingsTab::Gateway));
         assert_eq!(state.field_count(), 12); // enabled, prefix, slack×2, telegram×2, discord×3, whatsapp×3
         state.reduce(SettingsAction::SwitchTab(SettingsTab::Agent));
         assert_eq!(state.field_count(), 3); // name, prompt, backend
+        state.reduce(SettingsAction::SwitchTab(SettingsTab::Advanced));
+        assert_eq!(state.field_count(), 9); // 9 advanced fields
     }
 
     #[test]

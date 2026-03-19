@@ -39,14 +39,15 @@ pub fn render(
 
     // Tab bar
     let active = settings.active_tab();
-    let tab_labels = vec!["Provider", "Tools", "Web Search", "Reasoning", "Gateway", "Agent"];
+    let tab_labels = vec!["Prov", "Tools", "Search", "Chat", "GW", "Agent", "Adv"];
     let tab_index = match active {
         SettingsTab::Provider => 0,
         SettingsTab::Tools => 1,
         SettingsTab::WebSearch => 2,
-        SettingsTab::Reasoning => 3,
+        SettingsTab::Chat => 3,
         SettingsTab::Gateway => 4,
         SettingsTab::Agent => 5,
+        SettingsTab::Advanced => 6,
     };
     let tabs = Tabs::new(tab_labels)
         .select(tab_index)
@@ -103,9 +104,10 @@ fn render_tab_content<'a>(
         SettingsTab::Provider => render_provider_tab(settings, config, theme),
         SettingsTab::Tools => render_tools_tab(settings, config, theme),
         SettingsTab::WebSearch => render_websearch_tab(settings, config, theme),
-        SettingsTab::Reasoning => render_reasoning_tab(settings, config, theme),
+        SettingsTab::Chat => render_chat_tab(settings, config, theme),
         SettingsTab::Gateway => render_gateway_tab(settings, config, theme),
         SettingsTab::Agent => render_agent_tab(settings, config, theme),
+        SettingsTab::Advanced => render_advanced_tab(settings, config, theme),
     }
 }
 
@@ -429,7 +431,7 @@ fn render_websearch_tab<'a>(
     lines
 }
 
-fn render_reasoning_tab<'a>(
+fn render_chat_tab<'a>(
     settings: &'a SettingsState,
     config: &'a ConfigState,
     theme: &ThemeTokens,
@@ -437,44 +439,124 @@ fn render_reasoning_tab<'a>(
     let mut lines = Vec::new();
 
     lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled("  Reasoning", theme.fg_active)));
+    lines.push(Line::from(Span::styled("  Chat", theme.fg_active)));
     lines.push(Line::from(Span::styled(
-        "  Configure extended thinking",
+        "  Configure streaming and memory",
         theme.fg_dim,
     )));
     lines.push(Line::raw(""));
 
-    let current_effort = config.reasoning_effort();
-    let effort_display = if current_effort.is_empty() {
-        "off"
-    } else {
-        current_effort
-    };
-
-    // Only one field: effort
-    let is_selected = settings.field_cursor() == 0;
-    let marker = if is_selected { "> " } else { "  " };
-    let marker_style = if is_selected { theme.accent_primary } else { theme.fg_dim };
-    let value_style = if is_selected { theme.accent_primary } else { theme.accent_secondary };
-
-    let mut spans = vec![
-        Span::styled(marker, marker_style),
-        Span::styled("Effort:  ", theme.fg_dim),
-        Span::styled(effort_display.to_string(), value_style),
+    // Fields 0–2: toggles
+    let toggles: [(usize, bool, &str, &str); 3] = [
+        (0, config.enable_streaming,           "Streaming",           "enable_streaming"),
+        (1, config.enable_conversation_memory, "Conversation Memory", "enable_conversation_memory"),
+        (2, config.enable_honcho_memory,       "Honcho Memory",       "enable_honcho_memory"),
     ];
-    if is_selected {
-        spans.push(Span::styled("  [Enter: pick]", theme.fg_dim));
+    for (idx, enabled, name, _field_name) in &toggles {
+        let is_selected = settings.field_cursor() == *idx;
+        let check = if *enabled { "[x]" } else { "[ ]" };
+        let marker = if is_selected { "> " } else { "  " };
+        let marker_style = if is_selected { theme.accent_primary } else { theme.fg_dim };
+        let check_style = if *enabled { theme.accent_success } else { theme.fg_dim };
+        let label_style = if is_selected { theme.accent_primary } else { theme.fg_active };
+        let mut spans = vec![
+            Span::styled(marker, marker_style),
+            Span::styled(check, check_style),
+            Span::raw(" "),
+            Span::styled(*name, label_style),
+        ];
+        if is_selected {
+            spans.push(Span::styled("  [Space: toggle]", theme.fg_dim));
+        }
+        lines.push(Line::from(spans));
     }
-    lines.push(Line::from(spans));
+
+    // Fields 3–5: text / password fields
+    let text_fields: [(usize, &str, &str, &str, bool); 3] = [
+        (3, "Honcho API Key:  ", config.honcho_api_key.as_str(),       "honcho_api_key",       true),
+        (4, "Honcho Base URL: ", config.honcho_base_url.as_str(),      "honcho_base_url",      false),
+        (5, "Honcho Workspace:", config.honcho_workspace_id.as_str(),  "honcho_workspace_id",  false),
+    ];
+    for (idx, label, value, field_name, password) in &text_fields {
+        render_gateway_text_field(settings, theme, &mut lines, *idx, label, value, field_name, *password);
+    }
+
+    lines
+}
+
+fn render_advanced_tab<'a>(
+    settings: &'a SettingsState,
+    config: &'a ConfigState,
+    theme: &ThemeTokens,
+) -> Vec<Line<'a>> {
+    let mut lines = Vec::new();
 
     lines.push(Line::raw(""));
-    lines.push(Line::from(vec![
-        Span::styled("  Options:  ", theme.fg_dim),
-        Span::styled(
-            "Off / Minimal / Low / Medium / High / Extra High",
-            theme.fg_dim,
-        ),
-    ]));
+    lines.push(Line::from(Span::styled("  Advanced", theme.fg_active)));
+    lines.push(Line::from(Span::styled(
+        "  Context compaction and retry settings",
+        theme.fg_dim,
+    )));
+    lines.push(Line::raw(""));
+
+    // Field 0: auto_compact_context (toggle)
+    {
+        let is_selected = settings.field_cursor() == 0;
+        let marker = if is_selected { "> " } else { "  " };
+        let marker_style = if is_selected { theme.accent_primary } else { theme.fg_dim };
+        let check = if config.auto_compact_context { "[x]" } else { "[ ]" };
+        let check_style = if config.auto_compact_context { theme.accent_success } else { theme.fg_dim };
+        let label_style = if is_selected { theme.accent_primary } else { theme.fg_active };
+        let mut spans = vec![
+            Span::styled(marker, marker_style),
+            Span::styled(check, check_style),
+            Span::raw(" "),
+            Span::styled("Auto Compact Context", label_style),
+        ];
+        if is_selected {
+            spans.push(Span::styled("  [Space: toggle]", theme.fg_dim));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    // Fields 1–8: numeric inline-edit fields
+    let numeric_fields: [(usize, &str, String, &str); 8] = [
+        (1, "Max Context Msgs:", config.max_context_messages.to_string(), "max_context_messages"),
+        (2, "Max Tool Loops:  ", config.max_tool_loops.to_string(),       "max_tool_loops"),
+        (3, "Max Retries:     ", config.max_retries.to_string(),          "max_retries"),
+        (4, "Retry Delay (ms):", config.retry_delay_ms.to_string(),       "retry_delay_ms"),
+        (5, "Budget Tokens:   ", config.context_budget_tokens.to_string(), "context_budget_tokens"),
+        (6, "Compact Thres %: ", config.compact_threshold_pct.to_string(), "compact_threshold_pct"),
+        (7, "Keep Recent:     ", config.keep_recent_on_compact.to_string(), "keep_recent_on_compact"),
+        (8, "Bash Timeout (s):", config.bash_timeout_secs.to_string(),    "bash_timeout_secs"),
+    ];
+    for (idx, label, value, field_name) in &numeric_fields {
+        let is_selected = settings.field_cursor() == *idx;
+        let is_editing = settings.is_editing() && settings.editing_field() == Some(field_name);
+        let marker = if is_selected { "> " } else { "  " };
+        let marker_style = if is_selected { theme.accent_primary } else { theme.fg_dim };
+        let display_value: String = if is_editing {
+            format!("{}\u{2588}", settings.edit_buffer())
+        } else {
+            value.clone()
+        };
+        let value_style = if is_editing {
+            theme.fg_active
+        } else if is_selected {
+            theme.accent_primary
+        } else {
+            theme.fg_active
+        };
+        let mut spans = vec![
+            Span::styled(marker, marker_style),
+            Span::styled(format!("{:<17} ", label), theme.fg_dim),
+            Span::styled(display_value, value_style),
+        ];
+        if is_selected && !is_editing {
+            spans.push(Span::styled("  [Enter: edit]", theme.fg_dim));
+        }
+        lines.push(Line::from(spans));
+    }
 
     lines
 }
