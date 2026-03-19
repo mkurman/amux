@@ -1,7 +1,7 @@
 // Widget modules — uncomment as implemented
 pub mod header;
 pub mod footer;
-// pub mod splash;
+pub mod splash;
 // pub mod chat;
 // pub mod message;
 // pub mod reasoning;

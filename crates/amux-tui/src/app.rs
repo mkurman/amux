@@ -619,19 +619,10 @@ impl StringModel for TuiModel {
         // Body
         let body_h = (self.height as usize)
             .saturating_sub(header_lines.len() + footer_lines.len());
-        if self.chat.active_thread().is_none() {
-            // Splash screen
-            let pad_top = body_h / 3;
-            for _ in 0..pad_top {
-                lines.push(" ".repeat(w));
-            }
-            lines.push(center_str("T A M U X", w));
-            lines.push(center_str("plan . solve . ship", w));
-            lines.push(center_str("", w));
-            lines.push(center_str("Type a prompt to begin", w));
-            lines.push(center_str("Ctrl+P: commands  Ctrl+T: threads", w));
-            while lines.len() < header_lines.len() + body_h {
-                lines.push(" ".repeat(w));
+        if self.chat.active_thread().is_none() && self.chat.streaming_content().is_empty() {
+            let splash = crate::widgets::splash::splash_widget(&self.theme, w, body_h);
+            for line in splash {
+                lines.push(line);
             }
         } else {
             // Show messages from active thread
