@@ -613,10 +613,6 @@ impl TuiModel {
 
         let ctrl = modifiers.contains(KeyModifiers::CONTROL);
 
-        // Clear pending_g on any key that isn't 'g'
-        if code != KeyCode::Char('g') {
-            self.pending_g = false;
-        }
 
         // Clear pending_stop on any non-Esc key
         if code != KeyCode::Esc {
@@ -698,34 +694,18 @@ impl TuiModel {
                 self.last_error = None;
             }
 
-            // ── Quit (only when focus is NOT on input) ────────────────────────
-            KeyCode::Char('q') if !ctrl && self.focus != FocusArea::Input => return true,
+            // Quit only via /quit command (no single-key quit to avoid accidents)
 
-            // ── Vim scroll motions (only when focus is Chat or Sidebar) ───────
-            KeyCode::Char('G') if !ctrl && self.focus == FocusArea::Chat => {
-                self.chat
-                    .reduce(chat::ChatAction::ScrollChat(-(self.chat.scroll_offset() as i32)));
+            // ── Scroll to top/bottom ─────────────────────────────────────────
+            KeyCode::Home if self.focus == FocusArea::Chat => {
+                self.chat.reduce(chat::ChatAction::ScrollChat(i32::MAX / 2));
+                self.chat.select_message(Some(0));
             }
-            KeyCode::Char('g') if !ctrl && self.focus == FocusArea::Chat => {
-                if self.pending_g {
-                    self.chat
-                        .reduce(chat::ChatAction::ScrollChat(i32::MAX / 2));
-                    self.pending_g = false;
-                } else {
-                    self.pending_g = true;
-                }
-                return false;
+            KeyCode::End if self.focus == FocusArea::Chat => {
+                let offset = self.chat.scroll_offset() as i32;
+                self.chat.reduce(chat::ChatAction::ScrollChat(-offset));
+                self.chat.select_message(None);
             }
-            KeyCode::Char('j') if !ctrl && self.focus != FocusArea::Input => match self.focus {
-                FocusArea::Chat => self.chat.select_next_message(),
-                FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(1)),
-                _ => {}
-            },
-            KeyCode::Char('k') if !ctrl && self.focus != FocusArea::Input => match self.focus {
-                FocusArea::Chat => self.chat.select_prev_message(),
-                FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(-1)),
-                _ => {}
-            },
             KeyCode::Down if self.focus != FocusArea::Input => match self.focus {
                 FocusArea::Chat => self.chat.select_next_message(),
                 FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(1)),
@@ -757,12 +737,8 @@ impl TuiModel {
                     }
                 }
             }
-            KeyCode::Char('[') if self.focus != FocusArea::Input => self
-                .sidebar
-                .reduce(sidebar::SidebarAction::SwitchTab(sidebar::SidebarTab::Tasks)),
-            KeyCode::Char(']') if self.focus != FocusArea::Input => self
-                .sidebar
-                .reduce(sidebar::SidebarAction::SwitchTab(sidebar::SidebarTab::Subagents)),
+            // Sidebar tab switching via Tab when sidebar is focused
+            // (removed [/] keys — confusing)
 
             // ── Input-only: Enter submits, Backspace deletes, chars type ──────
             KeyCode::Enter => {
@@ -941,11 +917,11 @@ impl TuiModel {
                         .reduce(SettingsAction::SwitchTab(all[prev_idx]));
                     return false;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
+                KeyCode::Down => {
                     self.settings.reduce(SettingsAction::NavigateField(1));
                     return false;
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
+                KeyCode::Up => {
                     self.settings.reduce(SettingsAction::NavigateField(-1));
                     return false;
                 }
@@ -1071,13 +1047,6 @@ impl TuiModel {
                 self.modal.reduce(modal::ModalAction::SetQuery(
                     self.input.buffer().to_string(),
                 ));
-            }
-            // Non-searchable modals: j/k navigate
-            KeyCode::Char('j') if !is_searchable => {
-                self.modal.reduce(modal::ModalAction::Navigate(1));
-            }
-            KeyCode::Char('k') if !is_searchable => {
-                self.modal.reduce(modal::ModalAction::Navigate(-1));
             }
             _ => {}
         }

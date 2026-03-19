@@ -91,8 +91,8 @@ pub fn render_status_bar(
         spans.push(Span::styled("!", theme.accent_danger));
         spans.push(Span::styled(":error  ", theme.fg_dim));
     }
-    spans.push(Span::styled("q", theme.fg_active));
-    spans.push(Span::styled(":quit", theme.fg_dim));
+    spans.push(Span::styled("/quit", theme.fg_active));
+    spans.push(Span::styled(":exit", theme.fg_dim));
 
     let line = Line::from(spans);
     frame.render_widget(Paragraph::new(vec![line]), area);
