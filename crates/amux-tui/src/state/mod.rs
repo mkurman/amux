@@ -1,7 +1,7 @@
 // Sub-module declarations — uncomment as modules are implemented
 pub mod chat;
 pub mod input;
-// pub mod modal;
+pub mod modal;
 // pub mod sidebar;
 // pub mod task;
 // pub mod config;
@@ -59,7 +59,7 @@ pub use chat::{ChatState, ChatAction, TranscriptMode, ToolCallVm, ToolCallStatus
 pub enum TaskAction {}
 pub enum SidebarAction {}
 pub use input::{InputState, InputAction, InputMode};
-pub enum ModalAction {}
+pub use modal::{ModalState, ModalAction, ModalKind, CommandItem};
 pub enum ConfigAction {}
 pub enum ApprovalAction {}
 pub enum SettingsAction {}
