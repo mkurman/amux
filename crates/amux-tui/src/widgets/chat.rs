@@ -12,7 +12,7 @@ pub fn chat_widget(
     let border_color = if focused { theme.accent_primary } else { theme.fg_dim };
     let bc = border_color.fg();
     let b = &ROUNDED_BORDER;
-    let inner_width = width.saturating_sub(3); // extra col safety margin for wide Unicode glyphs
+    let inner_width = width.saturating_sub(2);
     let inner_height = height.saturating_sub(2); // top and bottom borders
 
     let mut result = Vec::new();
@@ -45,8 +45,8 @@ pub fn chat_widget(
     };
 
     for line in &content_lines {
-        let padded = super::pad_to_width(line, inner_width);
-        result.push(format!("{}{}{}{}{}", bc, b.vertical, padded, b.vertical, FG_CLOSE));
+        let fitted = super::fit_to_width(line, inner_width);
+        result.push(format!("{}{}{}{}{}", bc, b.vertical, fitted, b.vertical, FG_CLOSE));
     }
 
     // Bottom border

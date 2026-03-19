@@ -536,11 +536,11 @@ impl TuiModel {
                 self.modal.reduce(modal::ModalAction::Pop);
                 self.input.reduce(input::InputAction::Clear);
             }
-            // Navigation: arrows AND j/k work in ALL modals
-            KeyCode::Down | KeyCode::Char('j') => {
+            // Arrow keys navigate in ALL modals
+            KeyCode::Down => {
                 self.modal.reduce(modal::ModalAction::Navigate(1));
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 self.modal.reduce(modal::ModalAction::Navigate(-1));
             }
             KeyCode::Enter => {
@@ -557,10 +557,18 @@ impl TuiModel {
                 ));
             }
             KeyCode::Char(c) if is_searchable => {
+                // Searchable modals: chars go to search input
                 self.input.reduce(input::InputAction::InsertChar(c));
                 self.modal.reduce(modal::ModalAction::SetQuery(
                     self.input.buffer().to_string(),
                 ));
+            }
+            // Non-searchable modals: j/k navigate
+            KeyCode::Char('j') if !is_searchable => {
+                self.modal.reduce(modal::ModalAction::Navigate(1));
+            }
+            KeyCode::Char('k') if !is_searchable => {
+                self.modal.reduce(modal::ModalAction::Navigate(-1));
             }
             _ => {}
         }

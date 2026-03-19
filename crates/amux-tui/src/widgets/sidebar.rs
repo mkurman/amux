@@ -14,7 +14,7 @@ pub fn sidebar_widget(
     let border_color = if focused { theme.accent_primary } else { theme.fg_dim };
     let bc = border_color.fg();
     let b = &ROUNDED_BORDER;
-    let inner_width = width.saturating_sub(3); // extra col safety margin for wide Unicode glyphs
+    let inner_width = width.saturating_sub(2);
     let inner_height = height.saturating_sub(2);
 
     let mut result = Vec::new();
@@ -57,7 +57,9 @@ pub fn sidebar_widget(
     };
 
     for line in &body_lines {
-        result.push(format!("{}{}{}{}{}", bc, b.vertical, line, b.vertical, FG_CLOSE));
+        // Fit content to inner_width so border chars don't get pushed past sidebar edge
+        let fitted = super::fit_to_width(line, inner_width);
+        result.push(format!("{}{}{}{}{}", bc, b.vertical, fitted, b.vertical, FG_CLOSE));
     }
 
     // Bottom border
