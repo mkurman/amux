@@ -2,11 +2,11 @@
 pub mod chat;
 pub mod input;
 pub mod modal;
-// pub mod sidebar;
-// pub mod task;
-// pub mod config;
-// pub mod approval;
-// pub mod settings;
+pub mod sidebar;
+pub mod task;
+pub mod config;
+pub mod approval;
+pub mod settings;
 
 // ── Focus ────────────────────────────────────────────────────────────────────
 
@@ -56,13 +56,13 @@ pub enum DaemonCommand {
 // These will be filled in by later tasks.
 
 pub use chat::{ChatState, ChatAction, TranscriptMode, ToolCallVm, ToolCallStatus};
-pub enum TaskAction {}
-pub enum SidebarAction {}
+pub use task::{TaskState, TaskAction};
+pub use sidebar::{SidebarState, SidebarAction, SidebarTab};
 pub use input::{InputState, InputAction, InputMode};
 pub use modal::{ModalState, ModalAction, ModalKind, CommandItem};
-pub enum ConfigAction {}
-pub enum ApprovalAction {}
-pub enum SettingsAction {}
+pub use config::{ConfigState, ConfigAction};
+pub use approval::{ApprovalState, ApprovalAction, RiskLevel, PendingApproval};
+pub use settings::{SettingsState, SettingsAction, SettingsTab};
 
 // ── Top-level app action ──────────────────────────────────────────────────────
 
