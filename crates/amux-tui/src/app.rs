@@ -119,6 +119,8 @@ impl TuiModel {
     }
 
     /// Push the current config state to the daemon via SetConfigJson.
+    /// TUI explicitly disables frontend-only tools (workspace, terminal management,
+    /// managed commands) since those require the Electron GUI.
     fn sync_config_to_daemon(&self) {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({
             "provider": &self.config.provider,
@@ -126,6 +128,19 @@ impl TuiModel {
             "api_key": &self.config.api_key,
             "model": &self.config.model,
             "reasoning_effort": &self.config.reasoning_effort,
+            "tools": {
+                "bash": true,
+                "file_operations": true,
+                "web_search": true,
+                "web_browse": false,
+                "vision": false,
+                "system_info": true,
+                "gateway_messaging": false,
+                // TUI-specific: disable frontend-only tools
+                "workspace": false,
+                "terminal_management": false,
+                "managed_commands": false,
+            },
         })) {
             self.send_daemon_command(DaemonCommand::SetConfigJson(json));
         }
