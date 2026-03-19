@@ -27,30 +27,28 @@ pub fn escape_markup(s: &str) -> String {
     s.replace('[', "\\[")
 }
 
-/// Approximate visible length by stripping ftui markup tags.
+/// Visible column width by stripping ftui markup tags and using Unicode width.
 ///
 /// Markup tags are `[tagname]`, `[tagname=value]`, `[/tagname]`.
 /// Escaped brackets `\[` count as one visible character.
+/// Uses `unicode_width::UnicodeWidthChar` for proper CJK/emoji/box-drawing widths.
 pub fn strip_markup_len(s: &str) -> usize {
+    use unicode_width::UnicodeWidthChar;
     let mut len = 0;
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\\' {
-            // Escaped character: `\[` or `\\` — the next char is visible
             if let Some(&next) = chars.peek() {
                 if next == '[' || next == '\\' {
-                    chars.next();
-                    len += 1;
+                    let escaped = chars.next().unwrap();
+                    len += UnicodeWidthChar::width(escaped).unwrap_or(1);
                     continue;
                 }
             }
-            // Lone backslash — count it
-            len += 1;
+            len += UnicodeWidthChar::width(c).unwrap_or(1);
         } else if c == '[' {
             // Potential markup tag — consume until ']'
             let mut is_tag = false;
-            let mut depth = 0;
-            // Save position to restore if not a valid tag
             let mut tag_chars = Vec::new();
             tag_chars.push(c);
             for tc in chars.by_ref() {
@@ -59,23 +57,17 @@ pub fn strip_markup_len(s: &str) -> usize {
                     is_tag = true;
                     break;
                 }
-                if tc == '[' {
-                    depth += 1;
-                    if depth > 2 {
-                        break; // not a tag
-                    }
-                }
                 if tc == '\n' {
-                    break; // tags don't span lines
+                    break;
                 }
             }
             if !is_tag {
-                // Not a tag — count all consumed chars as visible
-                len += tag_chars.len();
+                for tc in &tag_chars {
+                    len += UnicodeWidthChar::width(*tc).unwrap_or(1);
+                }
             }
-            // If is_tag, the entire [...] is markup and not visible
         } else {
-            len += 1;
+            len += UnicodeWidthChar::width(c).unwrap_or(1);
         }
     }
     len
@@ -112,9 +104,11 @@ pub fn fit_to_width(s: &str, width: usize) -> String {
     }
 }
 
-/// Truncate a string (containing markup tags) to a maximum visible width.
+/// Truncate a string (containing markup tags) to a maximum visible column width.
 /// Preserves markup tags but removes visible characters beyond the limit.
+/// Uses Unicode width for proper column counting.
 pub fn truncate_to_width(s: &str, width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
     let mut result = String::new();
     let mut visible = 0;
     let mut chars = s.chars().peekable();
@@ -127,16 +121,21 @@ pub fn truncate_to_width(s: &str, width: usize) -> String {
         if c == '\\' {
             if let Some(&next) = chars.peek() {
                 if next == '[' || next == '\\' {
-                    if visible < width {
+                    let escaped = chars.next().unwrap();
+                    let w = UnicodeWidthChar::width(escaped).unwrap_or(1);
+                    if visible + w <= width {
                         result.push(c);
-                        result.push(chars.next().unwrap());
-                        visible += 1;
+                        result.push(escaped);
+                        visible += w;
                     }
                     continue;
                 }
             }
-            result.push(c);
-            visible += 1;
+            let w = UnicodeWidthChar::width(c).unwrap_or(1);
+            if visible + w <= width {
+                result.push(c);
+                visible += w;
+            }
         } else if c == '[' {
             // Consume the entire tag (zero visible width)
             result.push(c);
@@ -147,13 +146,16 @@ pub fn truncate_to_width(s: &str, width: usize) -> String {
                 }
             }
         } else {
-            result.push(c);
-            visible += 1;
+            let w = UnicodeWidthChar::width(c).unwrap_or(1);
+            if visible + w <= width {
+                result.push(c);
+                visible += w;
+            } else {
+                break; // char would exceed width
+            }
         }
     }
 
-    // Close any unclosed tags by appending remaining markup
-    // (the fix_nested_tags preprocessor handles this)
     result
 }
 

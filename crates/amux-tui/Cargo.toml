@@ -26,6 +26,7 @@ ftui-text = { version = "0.2.1", features = ["markup"] }
 ftui-render = "0.2.1"
 ftui-style = "0.2.1"
 unicode-segmentation = "1"
+unicode-width = "0.2"
 crossterm = "0.28"
 web-time = "1"
 futures = { workspace = true }
