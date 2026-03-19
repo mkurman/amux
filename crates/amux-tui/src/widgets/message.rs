@@ -6,6 +6,8 @@ use crate::theme::ThemeTokens;
 
 /// Set of message indices whose reasoning blocks are expanded
 pub type ExpandedReasoning = std::collections::HashSet<usize>;
+/// Set of message indices whose tool details are expanded
+pub type ExpandedTools = std::collections::HashSet<usize>;
 
 /// Convert a message into ratatui Lines (all owned/static)
 pub fn message_to_lines(
@@ -15,13 +17,14 @@ pub fn message_to_lines(
     theme: &ThemeTokens,
     width: usize,
     expanded: &ExpandedReasoning,
+    expanded_tools: &ExpandedTools,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
 
     match mode {
-        TranscriptMode::Compact => render_compact(msg, msg_index, theme, width, expanded, &mut lines),
+        TranscriptMode::Compact => render_compact(msg, msg_index, theme, width, expanded, expanded_tools, &mut lines),
         TranscriptMode::Tools => render_tools_only(msg, theme, width, &mut lines),
-        TranscriptMode::Full => render_full(msg, msg_index, theme, width, expanded, &mut lines),
+        TranscriptMode::Full => render_full(msg, msg_index, theme, width, expanded, expanded_tools, &mut lines),
     }
 
     lines
@@ -33,12 +36,13 @@ fn render_compact(
     theme: &ThemeTokens,
     width: usize,
     expanded: &ExpandedReasoning,
+    expanded_tools: &ExpandedTools,
     lines: &mut Vec<Line<'static>>,
 ) {
     let indent = 7;
     let content_width = width.saturating_sub(indent + 1);
 
-    // TOOL messages always render as compact one-liner with gear icon
+    // TOOL messages: compact one-liner or expanded with args + result
     if msg.role == MessageRole::Tool {
         if let Some(name) = &msg.tool_name {
             let status = msg.tool_status.as_deref().unwrap_or("done");
@@ -51,6 +55,56 @@ fn render_compact(
                 Span::raw(" "),
                 Span::styled(status_text, status_style),
             ]));
+
+            // Expanded tool details
+            if expanded_tools.contains(&msg_index) {
+                let detail_indent = 4;
+                let detail_width = width.saturating_sub(detail_indent + 1);
+
+                // Show arguments
+                if let Some(args) = &msg.tool_arguments {
+                    if !args.is_empty() {
+                        let args_preview = if args.len() > detail_width.saturating_sub(6) {
+                            format!("{}...", &args[..detail_width.saturating_sub(9).min(args.len())])
+                        } else {
+                            args.clone()
+                        };
+                        lines.push(Line::from(vec![
+                            Span::raw(" ".repeat(detail_indent)),
+                            Span::styled("args: ", theme.fg_dim),
+                            Span::styled(args_preview, theme.fg_active),
+                        ]));
+                    }
+                }
+
+                // Show result (truncated to 5 lines)
+                let result_text = &msg.content;
+                if !result_text.is_empty() {
+                    let result_lines: Vec<&str> = result_text.lines().collect();
+                    let show_lines = result_lines.len().min(5);
+                    let has_more = result_lines.len() > 5;
+
+                    for (i, rline) in result_lines[..show_lines].iter().enumerate() {
+                        let prefix = if i == 0 { "result: " } else { "        " };
+                        let truncated = if rline.len() > detail_width.saturating_sub(prefix.len()) {
+                            format!("{}...", &rline[..detail_width.saturating_sub(prefix.len() + 3).min(rline.len())])
+                        } else {
+                            rline.to_string()
+                        };
+                        lines.push(Line::from(vec![
+                            Span::raw(" ".repeat(detail_indent)),
+                            Span::styled(prefix.to_string(), theme.fg_dim),
+                            Span::styled(truncated, theme.fg_active),
+                        ]));
+                    }
+                    if has_more {
+                        lines.push(Line::from(vec![
+                            Span::raw(" ".repeat(detail_indent)),
+                            Span::styled("        ...", theme.fg_dim),
+                        ]));
+                    }
+                }
+            }
         }
         return;
     }
@@ -165,12 +219,15 @@ fn render_full(
     theme: &ThemeTokens,
     width: usize,
     expanded: &ExpandedReasoning,
+    expanded_tools: &ExpandedTools,
     lines: &mut Vec<Line<'static>>,
 ) {
-    // Full mode: always expand reasoning
+    // Full mode: always expand reasoning and tools
     let mut full_expanded = expanded.clone();
     full_expanded.insert(msg_index);
-    render_compact(msg, msg_index, theme, width, &full_expanded, lines);
+    let mut full_tools = expanded_tools.clone();
+    full_tools.insert(msg_index);
+    render_compact(msg, msg_index, theme, width, &full_expanded, &full_tools, lines);
 }
 
 fn role_badge(role: MessageRole) -> (&'static str, Style) {
@@ -232,6 +289,10 @@ mod tests {
         ExpandedReasoning::new()
     }
 
+    fn empty_tools() -> ExpandedTools {
+        ExpandedTools::new()
+    }
+
     #[test]
     fn wrap_text_basic() {
         let lines = wrap_text("hello world foo bar", 12);
@@ -251,7 +312,7 @@ mod tests {
             content: "Hello".into(),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
         assert!(!lines.is_empty());
     }
 
@@ -261,11 +322,27 @@ mod tests {
             role: MessageRole::Tool,
             tool_name: Some("bash_command".into()),
             tool_status: Some("done".into()),
-            content: "some output here".into(), // has content but should still show compact
+            content: "some output here".into(),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
         assert_eq!(lines.len(), 1); // single compact line
+    }
+
+    #[test]
+    fn tool_message_expanded_shows_details() {
+        let msg = AgentMessage {
+            role: MessageRole::Tool,
+            tool_name: Some("bash_command".into()),
+            tool_status: Some("done".into()),
+            tool_arguments: Some("ls -la /home/user".into()),
+            content: "total 208\ndrwxr-xr-x 15 user user 4096 Jan 1 00:00 .".into(),
+            ..Default::default()
+        };
+        let mut exp_tools = empty_tools();
+        exp_tools.insert(0);
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &exp_tools);
+        assert!(lines.len() > 1, "Expanded tool should have more than 1 line, got {}", lines.len());
     }
 
     #[test]
@@ -277,7 +354,7 @@ mod tests {
             content: "Workspace Default:\n  Surface: Infinite Canvas".into(),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
         // Should be 1 compact line, not the full content
         assert_eq!(lines.len(), 1);
     }
@@ -290,7 +367,7 @@ mod tests {
             reasoning: Some("Let me think...".into()),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
         // First line should be reasoning hint, then ASST badge
         assert!(lines.len() >= 2);
         let first_text: String = lines[0].spans.iter().map(|s| s.content.to_string()).collect();
@@ -305,10 +382,10 @@ mod tests {
             reasoning: Some("Thinking step by step".into()),
             ..Default::default()
         };
-        let collapsed = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded());
+        let collapsed = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
         let mut exp = empty_expanded();
         exp.insert(0);
-        let expanded = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &exp);
+        let expanded = message_to_lines(&msg, 0, TranscriptMode::Compact, &ThemeTokens::default(), 80, &exp, &empty_tools());
         assert!(expanded.len() > collapsed.len(), "Expanded should have more lines");
     }
 
@@ -319,7 +396,7 @@ mod tests {
             content: "Hello".into(),
             ..Default::default()
         };
-        let lines = message_to_lines(&msg, 0, TranscriptMode::Tools, &ThemeTokens::default(), 80, &empty_expanded());
+        let lines = message_to_lines(&msg, 0, TranscriptMode::Tools, &ThemeTokens::default(), 80, &empty_expanded(), &empty_tools());
         assert!(lines.is_empty());
     }
 

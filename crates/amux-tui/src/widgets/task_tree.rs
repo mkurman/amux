@@ -1,4 +1,5 @@
 use ratatui::prelude::*;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -25,6 +26,10 @@ fn build_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let selected = sidebar.selected_item();
+    // item_index tracks selectable items (goal runs, steps, standalone tasks)
+    let mut item_index: usize = 0;
+    let sel_style = Style::default().bg(Color::Indexed(236));
 
     // Zone 1: Goal Runs
     let goal_runs = tasks.goal_runs();
@@ -35,14 +40,27 @@ fn build_lines(
         let dot = goal_run_status_dot(run.status, theme);
         let status_span = goal_run_status_label(run.status, theme);
 
-        lines.push(Line::from(vec![
+        let is_selected = item_index == selected;
+        let spans = vec![
+            if is_selected {
+                Span::styled("> ", Style::default().fg(Color::Indexed(178)))
+            } else {
+                Span::raw("  ")
+            },
             Span::styled(arrow.to_string(), theme.fg_active),
             Span::raw(" "),
             Span::raw(run.title.clone()),
             Span::raw(" "),
             dot,
             status_span,
-        ]));
+        ];
+        let line = if is_selected {
+            Line::from(spans).style(sel_style)
+        } else {
+            Line::from(spans)
+        };
+        lines.push(line);
+        item_index += 1;
 
         if expanded {
             let mut steps = run.steps.clone();
@@ -50,12 +68,25 @@ fn build_lines(
 
             for step in &steps {
                 let chip = step_status_chip(step.status, theme);
-                lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    chip,
-                    Span::raw(" "),
-                    Span::raw(step.title.clone()),
-                ]));
+                let is_sel = item_index == selected;
+                let line = if is_sel {
+                    Line::from(vec![
+                        Span::styled("> ", Style::default().fg(Color::Indexed(178))),
+                        Span::raw("  "),
+                        chip,
+                        Span::raw(" "),
+                        Span::raw(step.title.clone()),
+                    ]).style(sel_style)
+                } else {
+                    Line::from(vec![
+                        Span::raw("    "),
+                        chip,
+                        Span::raw(" "),
+                        Span::raw(step.title.clone()),
+                    ])
+                };
+                lines.push(line);
+                item_index += 1;
             }
         }
     }
@@ -81,12 +112,24 @@ fn build_lines(
 
         for task in standalone {
             let chip = task_status_chip(task.status, theme);
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                chip,
-                Span::raw(" "),
-                Span::raw(task.title.clone()),
-            ]));
+            let is_sel = item_index == selected;
+            let line = if is_sel {
+                Line::from(vec![
+                    Span::styled("> ", Style::default().fg(Color::Indexed(178))),
+                    chip,
+                    Span::raw(" "),
+                    Span::raw(task.title.clone()),
+                ]).style(sel_style)
+            } else {
+                Line::from(vec![
+                    Span::raw("  "),
+                    chip,
+                    Span::raw(" "),
+                    Span::raw(task.title.clone()),
+                ])
+            };
+            lines.push(line);
+            item_index += 1;
         }
     }
 

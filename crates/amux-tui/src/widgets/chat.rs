@@ -1,5 +1,5 @@
 use ratatui::prelude::*;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph};
 
@@ -44,14 +44,42 @@ pub fn render(
     let inner_height = inner.height as usize;
 
     let mut all_lines: Vec<Line> = Vec::new();
+    // Track which line indices belong to which message (for selected highlight)
+    let mut message_line_ranges: Vec<(usize, usize)> = Vec::new(); // (start, end) in all_lines
 
     let expanded = chat.expanded_reasoning();
+    let expanded_tools = chat.expanded_tools();
+    let selected_msg = chat.selected_message();
     if let Some(thread) = chat.active_thread() {
         for (idx, msg) in thread.messages.iter().enumerate() {
-            let msg_lines = super::message::message_to_lines(msg, idx, mode, theme, inner_width, expanded);
+            let start = all_lines.len();
+            let msg_lines = super::message::message_to_lines(msg, idx, mode, theme, inner_width, expanded, expanded_tools);
             all_lines.extend(msg_lines);
+            let end = all_lines.len();
+            message_line_ranges.push((start, end));
             if !all_lines.is_empty() {
                 all_lines.push(Line::raw(""));
+            }
+        }
+    }
+
+    // Apply selection highlight
+    if let Some(sel_idx) = selected_msg {
+        if let Some(&(start, end)) = message_line_ranges.get(sel_idx) {
+            let sel_style = Style::default()
+                .bg(Color::Indexed(236))
+                .add_modifier(Modifier::empty());
+            for line_idx in start..end {
+                if let Some(line) = all_lines.get_mut(line_idx) {
+                    // Prepend selection marker on first line, indent on continuation
+                    if line_idx == start {
+                        let mut new_spans = vec![Span::styled("> ", Style::default().fg(Color::Indexed(178)))];
+                        new_spans.extend(line.spans.iter().cloned());
+                        *line = Line::from(new_spans).style(sel_style);
+                    } else {
+                        *line = line.clone().style(sel_style);
+                    }
+                }
             }
         }
     }
@@ -111,7 +139,25 @@ pub fn render(
     // Clamp scroll to prevent overscroll past the top of content
     let total = all_lines.len();
     let max_scroll = total.saturating_sub(inner_height);
-    let scroll = chat.scroll_offset().min(max_scroll);
+
+    // Auto-scroll to keep selected message in view
+    let mut scroll = chat.scroll_offset().min(max_scroll);
+    if let Some(sel_idx) = selected_msg {
+        if let Some(&(sel_start, sel_end)) = message_line_ranges.get(sel_idx) {
+            // Visible window: when scroll=0, window is [total-inner_height, total)
+            // When scroll=N, window is [total-inner_height-N, total-N)
+            let window_end = total.saturating_sub(scroll);
+            let window_start = window_end.saturating_sub(inner_height);
+
+            if sel_start < window_start {
+                // Selected message is above the visible window -- scroll up
+                scroll = total.saturating_sub(sel_start + inner_height).min(max_scroll);
+            } else if sel_end > window_end {
+                // Selected message is below the visible window -- scroll down
+                scroll = total.saturating_sub(sel_end).min(max_scroll);
+            }
+        }
+    }
 
     let visible_lines = if total <= inner_height {
         // All lines fit -- pad at top to push content to bottom

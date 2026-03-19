@@ -112,6 +112,8 @@ pub struct ChatState {
     scroll_locked: bool,
     transcript_mode: TranscriptMode,
     expanded_reasoning: std::collections::HashSet<usize>,
+    selected_message: Option<usize>,
+    expanded_tools: std::collections::HashSet<usize>,
 }
 
 impl ChatState {
@@ -126,6 +128,8 @@ impl ChatState {
             expanded_reasoning: std::collections::HashSet::new(),
             scroll_locked: false,
             transcript_mode: TranscriptMode::Compact,
+            selected_message: None,
+            expanded_tools: std::collections::HashSet::new(),
         }
     }
 
@@ -184,6 +188,62 @@ impl ChatState {
             self.expanded_reasoning.remove(&msg_index);
         } else {
             self.expanded_reasoning.insert(msg_index);
+        }
+    }
+
+    // ── Message selection ──────────────────────────────────────────────────
+
+    pub fn selected_message(&self) -> Option<usize> {
+        self.selected_message
+    }
+
+    pub fn select_message(&mut self, index: Option<usize>) {
+        self.selected_message = index;
+    }
+
+    /// Move selection down (towards newer messages) or select the first if none.
+    pub fn select_next_message(&mut self) {
+        let count = self.active_thread().map(|t| t.messages.len()).unwrap_or(0);
+        if count == 0 {
+            self.selected_message = None;
+            return;
+        }
+        match self.selected_message {
+            None => self.selected_message = Some(0),
+            Some(idx) => {
+                if idx + 1 < count {
+                    self.selected_message = Some(idx + 1);
+                }
+            }
+        }
+    }
+
+    /// Move selection up (towards older messages).
+    pub fn select_prev_message(&mut self) {
+        match self.selected_message {
+            None => {
+                // Start from the last message
+                let count = self.active_thread().map(|t| t.messages.len()).unwrap_or(0);
+                if count > 0 {
+                    self.selected_message = Some(count - 1);
+                }
+            }
+            Some(0) => {} // already at top
+            Some(idx) => self.selected_message = Some(idx - 1),
+        }
+    }
+
+    // ── Tool expansion ──────────────────────────────────────────────────
+
+    pub fn expanded_tools(&self) -> &std::collections::HashSet<usize> {
+        &self.expanded_tools
+    }
+
+    pub fn toggle_tool_expansion(&mut self, msg_index: usize) {
+        if self.expanded_tools.contains(&msg_index) {
+            self.expanded_tools.remove(&msg_index);
+        } else {
+            self.expanded_tools.insert(msg_index);
         }
     }
 
@@ -542,5 +602,106 @@ mod tests {
         ]));
         state.reduce(ChatAction::SelectThread("t2".into()));
         assert_eq!(state.active_thread_id(), Some("t2"));
+    }
+
+    // ── Message selection tests ──────────────────────────────────────────
+
+    fn state_with_messages(count: usize) -> ChatState {
+        let mut state = ChatState::new();
+        let msgs: Vec<AgentMessage> = (0..count)
+            .map(|i| AgentMessage {
+                role: MessageRole::User,
+                content: format!("msg {}", i),
+                ..Default::default()
+            })
+            .collect();
+        let thread = AgentThread {
+            id: "t1".into(),
+            title: "Test".into(),
+            messages: msgs,
+            ..Default::default()
+        };
+        state.reduce(ChatAction::ThreadListReceived(vec![thread]));
+        state.reduce(ChatAction::SelectThread("t1".into()));
+        state
+    }
+
+    #[test]
+    fn select_next_message_from_none() {
+        let mut state = state_with_messages(3);
+        assert_eq!(state.selected_message(), None);
+        state.select_next_message();
+        assert_eq!(state.selected_message(), Some(0));
+    }
+
+    #[test]
+    fn select_next_message_advances() {
+        let mut state = state_with_messages(3);
+        state.select_next_message();
+        state.select_next_message();
+        assert_eq!(state.selected_message(), Some(1));
+    }
+
+    #[test]
+    fn select_next_message_clamps_at_end() {
+        let mut state = state_with_messages(2);
+        state.select_message(Some(1));
+        state.select_next_message();
+        assert_eq!(state.selected_message(), Some(1));
+    }
+
+    #[test]
+    fn select_prev_message_from_none() {
+        let mut state = state_with_messages(3);
+        state.select_prev_message();
+        assert_eq!(state.selected_message(), Some(2)); // last message
+    }
+
+    #[test]
+    fn select_prev_message_decreases() {
+        let mut state = state_with_messages(3);
+        state.select_message(Some(2));
+        state.select_prev_message();
+        assert_eq!(state.selected_message(), Some(1));
+    }
+
+    #[test]
+    fn select_prev_message_clamps_at_zero() {
+        let mut state = state_with_messages(3);
+        state.select_message(Some(0));
+        state.select_prev_message();
+        assert_eq!(state.selected_message(), Some(0));
+    }
+
+    #[test]
+    fn clear_selection() {
+        let mut state = state_with_messages(3);
+        state.select_message(Some(1));
+        state.select_message(None);
+        assert_eq!(state.selected_message(), None);
+    }
+
+    // ── Tool expansion tests ─────────────────────────────────────────────
+
+    #[test]
+    fn toggle_tool_expansion() {
+        let mut state = ChatState::new();
+        assert!(!state.expanded_tools().contains(&0));
+        state.toggle_tool_expansion(0);
+        assert!(state.expanded_tools().contains(&0));
+        state.toggle_tool_expansion(0);
+        assert!(!state.expanded_tools().contains(&0));
+    }
+
+    #[test]
+    fn toggle_tool_expansion_independent() {
+        let mut state = ChatState::new();
+        state.toggle_tool_expansion(0);
+        state.toggle_tool_expansion(1);
+        assert!(state.expanded_tools().contains(&0));
+        assert!(state.expanded_tools().contains(&1));
+        state.toggle_tool_expansion(0);
+        assert!(!state.expanded_tools().contains(&0));
+        assert!(state.expanded_tools().contains(&1));
     }
 }

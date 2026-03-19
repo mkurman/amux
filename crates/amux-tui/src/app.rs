@@ -17,6 +17,16 @@ use crate::state::*;
 use crate::theme::ThemeTokens;
 use crate::widgets;
 
+// ── Helper types ─────────────────────────────────────────────────────────────
+
+/// Flat representation of a sidebar item for matching selected index to data.
+struct SidebarFlatItem {
+    #[allow(dead_code)]
+    thread_id: Option<String>,
+    goal_run_id: Option<String>,
+    title: String,
+}
+
 // ── TuiModel ─────────────────────────────────────────────────────────────────
 
 pub struct TuiModel {
@@ -579,6 +589,14 @@ impl TuiModel {
                 let half_page = (self.height / 2) as i32;
                 self.chat.reduce(chat::ChatAction::ScrollChat(half_page));
             }
+            KeyCode::PageDown if self.focus == FocusArea::Chat => {
+                let half_page = (self.height / 2) as i32;
+                self.chat.reduce(chat::ChatAction::ScrollChat(-half_page));
+            }
+            KeyCode::PageUp if self.focus == FocusArea::Chat => {
+                let half_page = (self.height / 2) as i32;
+                self.chat.reduce(chat::ChatAction::ScrollChat(half_page));
+            }
 
             // ── Esc: close modal > stop stream (double) > move focus to Chat ──
             KeyCode::Esc => {
@@ -596,9 +614,16 @@ impl TuiModel {
                         self.status_line = "Press Esc again to stop stream".to_string();
                     }
                 } else {
-                    // Not streaming: move focus to Chat (away from input)
+                    // Not streaming: clear message selection or move focus to Chat
                     self.pending_stop = false;
-                    if self.focus == FocusArea::Input {
+                    if self.focus == FocusArea::Chat && self.chat.selected_message().is_some() {
+                        self.chat.select_message(None);
+                        // Return to tail-following: reset scroll to 0
+                        let current_scroll = self.chat.scroll_offset() as i32;
+                        if current_scroll > 0 {
+                            self.chat.reduce(chat::ChatAction::ScrollChat(-current_scroll));
+                        }
+                    } else if self.focus == FocusArea::Input {
                         self.focus = FocusArea::Chat;
                     }
                 }
@@ -636,28 +661,45 @@ impl TuiModel {
                 return false;
             }
             KeyCode::Char('j') if !ctrl && self.focus != FocusArea::Input => match self.focus {
-                FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(-1)),
+                FocusArea::Chat => self.chat.select_next_message(),
                 FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(1)),
                 _ => {}
             },
             KeyCode::Char('k') if !ctrl && self.focus != FocusArea::Input => match self.focus {
-                FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(1)),
+                FocusArea::Chat => self.chat.select_prev_message(),
                 FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(-1)),
                 _ => {}
             },
             KeyCode::Down if self.focus != FocusArea::Input => match self.focus {
-                FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(-1)),
+                FocusArea::Chat => self.chat.select_next_message(),
                 FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(1)),
                 _ => {}
             },
             KeyCode::Up if self.focus != FocusArea::Input => match self.focus {
-                FocusArea::Chat => self.chat.reduce(chat::ChatAction::ScrollChat(1)),
+                FocusArea::Chat => self.chat.select_prev_message(),
                 FocusArea::Sidebar => self.sidebar.reduce(sidebar::SidebarAction::Navigate(-1)),
                 _ => {}
             },
-            // Toggle reasoning on last assistant message
+            // Toggle reasoning on selected message (or last assistant if none selected)
             KeyCode::Char('r') if self.focus == FocusArea::Chat => {
-                self.chat.toggle_last_reasoning();
+                if let Some(sel) = self.chat.selected_message() {
+                    self.chat.toggle_reasoning(sel);
+                } else {
+                    self.chat.toggle_last_reasoning();
+                }
+            }
+            // Toggle tool expansion on selected message
+            KeyCode::Char('e') if self.focus == FocusArea::Chat => {
+                if let Some(sel) = self.chat.selected_message() {
+                    // Only toggle if the selected message is a Tool message
+                    let is_tool = self.chat.active_thread()
+                        .and_then(|t| t.messages.get(sel))
+                        .map(|m| m.role == chat::MessageRole::Tool)
+                        .unwrap_or(false);
+                    if is_tool {
+                        self.chat.toggle_tool_expansion(sel);
+                    }
+                }
             }
             KeyCode::Char('[') if self.focus != FocusArea::Input => self
                 .sidebar
@@ -668,6 +710,32 @@ impl TuiModel {
 
             // ── Input-only: Enter submits, Backspace deletes, chars type ──────
             KeyCode::Enter => {
+                // When Chat is focused and a message is selected: toggle tool expansion
+                if self.focus == FocusArea::Chat {
+                    if let Some(sel) = self.chat.selected_message() {
+                        let is_tool = self.chat.active_thread()
+                            .and_then(|t| t.messages.get(sel))
+                            .map(|m| m.role == chat::MessageRole::Tool)
+                            .unwrap_or(false);
+                        if is_tool {
+                            self.chat.toggle_tool_expansion(sel);
+                        }
+                        // Also toggle reasoning if it's an assistant message with reasoning
+                        let has_reasoning = self.chat.active_thread()
+                            .and_then(|t| t.messages.get(sel))
+                            .map(|m| m.role == chat::MessageRole::Assistant && m.reasoning.is_some())
+                            .unwrap_or(false);
+                        if has_reasoning {
+                            self.chat.toggle_reasoning(sel);
+                        }
+                        return false;
+                    }
+                }
+                // When Sidebar is focused: open selected task thread
+                if self.focus == FocusArea::Sidebar {
+                    self.handle_sidebar_enter();
+                    return false;
+                }
                 // Activate input focus on Enter if not already there
                 if self.focus != FocusArea::Input {
                     self.focus = FocusArea::Input;
@@ -1217,6 +1285,50 @@ impl TuiModel {
         self.input.set_mode(input::InputMode::Insert);
     }
 
+    fn handle_sidebar_enter(&mut self) {
+        let selected = self.sidebar.selected_item();
+        // Build a flat list of items matching the sidebar task_tree rendering order
+        let mut flat_items: Vec<SidebarFlatItem> = Vec::new();
+
+        for run in self.tasks.goal_runs() {
+            flat_items.push(SidebarFlatItem {
+                thread_id: None, // Goal runs don't directly have thread_ids
+                goal_run_id: Some(run.id.clone()),
+                title: run.title.clone(),
+            });
+            if self.sidebar.is_expanded(&run.id) {
+                for step in &run.steps {
+                    flat_items.push(SidebarFlatItem {
+                        thread_id: None,
+                        goal_run_id: Some(run.id.clone()),
+                        title: step.title.clone(),
+                    });
+                }
+            }
+        }
+
+        // Standalone tasks
+        for t in self.tasks.tasks() {
+            if t.goal_run_id.is_none() {
+                flat_items.push(SidebarFlatItem {
+                    thread_id: None,
+                    goal_run_id: None,
+                    title: t.title.clone(),
+                });
+            }
+        }
+
+        if let Some(item) = flat_items.get(selected) {
+            if let Some(goal_run_id) = &item.goal_run_id {
+                // Request goal run detail
+                self.send_daemon_command(DaemonCommand::RequestGoalRunDetail(goal_run_id.clone()));
+                self.status_line = format!("Goal: {}", item.title);
+            } else {
+                self.status_line = format!("Task: {}", item.title);
+            }
+        }
+    }
+
     pub fn handle_resize(&mut self, w: u16, h: u16) {
         self.width = w;
         self.height = h;
@@ -1271,8 +1383,24 @@ impl TuiModel {
                 // Click-to-focus: set focus based on which pane was clicked.
                 if cursor_in_chat {
                     self.focus = FocusArea::Chat;
+                    // Click in chat area: select the last message as starting point.
+                    // The user can then navigate with j/k.
+                    let msg_count = self.chat.active_thread()
+                        .map(|t| t.messages.len())
+                        .unwrap_or(0);
+                    if msg_count > 0 {
+                        let last_idx = msg_count.saturating_sub(1);
+                        self.chat.select_message(Some(last_idx));
+                    }
                 } else if cursor_in_sidebar {
                     self.focus = FocusArea::Sidebar;
+                    // Click in sidebar: select item near click position
+                    let click_row = mouse.row.saturating_sub(body_start_row + 2) as usize; // +2 for border + tabs
+                    let scroll = self.sidebar.scroll_offset();
+                    let item_idx = click_row + scroll;
+                    self.sidebar.reduce(sidebar::SidebarAction::Navigate(
+                        item_idx as i32 - self.sidebar.selected_item() as i32,
+                    ));
                 } else if cursor_in_input {
                     self.focus = FocusArea::Input;
                 }
