@@ -144,21 +144,19 @@ impl TuiModel {
     /// Calculate the dynamic input area height based on buffer content and attachments.
     /// Grows from 3 (border + 1 line + border) to a max of 12 rows.
     fn input_height(&self) -> u16 {
-        // Inner area = terminal_width - 2 (left+right border)
-        // First line has "▶ " (2 chars) prefix, continuation lines have "  " (3 chars) indent
-        // Ratatui wraps at the Paragraph area width
+        use unicode_width::UnicodeWidthStr;
+        // Inner area = terminal_width - 2 (borders)
+        // Prompt " ▶ " takes ~4 display columns (▶ is often 2-wide)
+        // Subtract extra padding to wrap BEFORE hitting the border
         let inner_w = self.width.saturating_sub(2) as usize;
-        if inner_w <= 4 {
+        if inner_w <= 6 {
             return 3;
         }
-        let first_line_w = inner_w.saturating_sub(3); // "▶ " prompt
-        let cont_line_w = inner_w.saturating_sub(3);  // continuation indent
+        let text_w = inner_w.saturating_sub(5); // prompt + padding safety
         let visual_lines: usize = self.input.buffer().split('\n')
-            .enumerate()
-            .map(|(i, line)| {
-                let w = if i == 0 { first_line_w } else { cont_line_w };
-                let len = line.chars().count() + if i == self.input.buffer().split('\n').count() - 1 { 1 } else { 0 }; // cursor on last
-                if w == 0 || len == 0 { 1 } else { (len + w - 1) / w }
+            .map(|line| {
+                let display_width = UnicodeWidthStr::width(line) + 1; // +1 for cursor
+                if text_w == 0 { 1 } else { (display_width + text_w - 1) / text_w }
             })
             .sum();
         let attach_count = self.attachments.len();
