@@ -1215,6 +1215,18 @@ impl TuiModel {
                 self.input.reduce(input::InputAction::DeleteWord);
             }
 
+            // ── Ctrl+V: paste from system clipboard ─────────────────────────
+            KeyCode::Char('v') if ctrl => {
+                match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                    Ok(text) if !text.is_empty() => {
+                        self.handle_paste(text);
+                    }
+                    _ => {
+                        // Clipboard unavailable or empty — ignore silently
+                    }
+                }
+            }
+
             // ── Copy selected message to clipboard ──────────────────────────
             KeyCode::Char('c') if self.focus == FocusArea::Chat && self.chat.selected_message().is_some() => {
                 if let Some(sel) = self.chat.selected_message() {
