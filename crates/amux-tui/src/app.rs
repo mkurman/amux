@@ -1050,10 +1050,12 @@ impl TuiModel {
                 self.input.reduce(input::InputAction::MoveCursorRight);
             }
             KeyCode::Up if self.focus == FocusArea::Input => {
-                self.input.reduce(input::InputAction::MoveCursorUp);
+                let wrap_w = self.width.saturating_sub(6) as usize; // inner width minus prompt
+                self.input.reduce(input::InputAction::MoveCursorUpVisual(wrap_w));
             }
             KeyCode::Down if self.focus == FocusArea::Input => {
-                self.input.reduce(input::InputAction::MoveCursorDown);
+                let wrap_w = self.width.saturating_sub(6) as usize;
+                self.input.reduce(input::InputAction::MoveCursorDownVisual(wrap_w));
             }
             KeyCode::Home if self.focus == FocusArea::Input => {
                 self.input.reduce(input::InputAction::MoveCursorHome);

@@ -20,6 +20,10 @@ pub enum InputAction {
     MoveCursorRight,
     MoveCursorUp,
     MoveCursorDown,
+    /// Move cursor up one visual line (accounting for text wrapping at given width)
+    MoveCursorUpVisual(usize),
+    /// Move cursor down one visual line
+    MoveCursorDownVisual(usize),
     MoveCursorHome,
     MoveCursorEnd,
     MoveCursorToPos(usize),
@@ -180,14 +184,73 @@ impl InputState {
 
     /// Save current buffer state for undo
     fn save_undo(&mut self) {
-        // Don't save duplicate states
         if self.undo_stack.last().map(|s| s.as_str()) != Some(&self.buffer) {
             self.undo_stack.push(self.buffer.clone());
             if self.undo_stack.len() > 100 {
-                self.undo_stack.remove(0); // cap at 100
+                self.undo_stack.remove(0);
             }
-            self.redo_stack.clear(); // new edit clears redo
+            self.redo_stack.clear();
         }
+    }
+
+    /// Get cursor position in visual (wrapped) line coordinates.
+    /// Each logical line is split into visual lines of `wrap_width` chars.
+    fn cursor_visual_line_col(&self, wrap_width: usize) -> (usize, usize) {
+        let mut vis_line = 0;
+        let mut offset = 0;
+        for logical_line in self.buffer.split('\n') {
+            let len = logical_line.chars().count();
+            let vis_lines_in_this = if wrap_width == 0 || len == 0 { 1 } else { (len + wrap_width - 1) / wrap_width };
+
+            let line_start = offset;
+            let line_end = offset + logical_line.len();
+
+            if self.cursor >= line_start && self.cursor <= line_end {
+                // Cursor is in this logical line
+                let chars_before = self.buffer[line_start..self.cursor].chars().count();
+                let vis_line_in_this = chars_before / wrap_width.max(1);
+                let vis_col = chars_before % wrap_width.max(1);
+                return (vis_line + vis_line_in_this, vis_col);
+            }
+
+            vis_line += vis_lines_in_this;
+            offset = line_end + 1; // +1 for \n
+        }
+        (vis_line, 0)
+    }
+
+    /// Total number of visual lines when wrapping at `wrap_width`.
+    fn total_visual_lines(&self, wrap_width: usize) -> usize {
+        self.buffer.split('\n')
+            .map(|line| {
+                let len = line.chars().count();
+                if wrap_width == 0 || len == 0 { 1 } else { (len + wrap_width - 1) / wrap_width }
+            })
+            .sum()
+    }
+
+    /// Convert visual (wrapped) line + col to byte offset.
+    fn visual_line_col_to_offset(&self, target_vis_line: usize, target_col: usize, wrap_width: usize) -> usize {
+        let mut vis_line = 0;
+        let mut offset = 0;
+        for logical_line in self.buffer.split('\n') {
+            let len = logical_line.chars().count();
+            let vis_lines_in_this = if wrap_width == 0 || len == 0 { 1 } else { (len + wrap_width - 1) / wrap_width };
+
+            if target_vis_line >= vis_line && target_vis_line < vis_line + vis_lines_in_this {
+                // Target is in this logical line
+                let vis_line_within = target_vis_line - vis_line;
+                let char_offset = vis_line_within * wrap_width + target_col.min(wrap_width - 1);
+                let clamped = char_offset.min(len);
+                // Convert char offset to byte offset
+                let byte_offset: usize = logical_line.chars().take(clamped).map(|c| c.len_utf8()).sum();
+                return offset + byte_offset;
+            }
+
+            vis_line += vis_lines_in_this;
+            offset += logical_line.len() + 1; // +1 for \n
+        }
+        self.buffer.len()
     }
 
     pub fn reduce(&mut self, action: InputAction) {
@@ -297,6 +360,26 @@ impl InputState {
                 let line_count = self.buffer.matches('\n').count() + 1;
                 if line + 1 < line_count {
                     self.cursor = self.line_col_to_offset(line + 1, col);
+                }
+            }
+            InputAction::MoveCursorUpVisual(wrap_width) => {
+                if wrap_width == 0 {
+                    return;
+                }
+                // Find cursor's position in visual (wrapped) coordinates
+                let (vis_line, vis_col) = self.cursor_visual_line_col(wrap_width);
+                if vis_line > 0 {
+                    self.cursor = self.visual_line_col_to_offset(vis_line - 1, vis_col, wrap_width);
+                }
+            }
+            InputAction::MoveCursorDownVisual(wrap_width) => {
+                if wrap_width == 0 {
+                    return;
+                }
+                let (vis_line, vis_col) = self.cursor_visual_line_col(wrap_width);
+                let total_vis_lines = self.total_visual_lines(wrap_width);
+                if vis_line + 1 < total_vis_lines {
+                    self.cursor = self.visual_line_col_to_offset(vis_line + 1, vis_col, wrap_width);
                 }
             }
             InputAction::MoveCursorHome => {
