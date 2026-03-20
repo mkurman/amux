@@ -27,6 +27,15 @@ pub enum InputAction {
     Redo,
 }
 
+/// A pasted multi-line block stored out-of-band; a placeholder token is kept
+/// in the buffer and expanded to the full content on submit.
+#[derive(Debug, Clone)]
+pub struct PasteBlock {
+    pub id: usize,
+    pub content: String,
+    pub line_count: usize,
+}
+
 pub struct InputState {
     buffer: String,
     cursor: usize,           // byte offset in buffer
@@ -34,6 +43,8 @@ pub struct InputState {
     submitted: Option<String>,
     undo_stack: Vec<String>,  // previous buffer states
     redo_stack: Vec<String>,  // for redo after undo
+    paste_blocks: Vec<PasteBlock>,
+    next_paste_id: usize,
 }
 
 impl InputState {
@@ -45,6 +56,8 @@ impl InputState {
             submitted: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            paste_blocks: Vec::new(),
+            next_paste_id: 0,
         }
     }
 
@@ -81,6 +94,67 @@ impl InputState {
     /// Convert (line, col) to byte offset (public, for mouse click positioning)
     pub fn line_col_to_offset_public(&self, line: usize, col: usize) -> usize {
         self.line_col_to_offset(line, col)
+    }
+
+    /// Return the stored paste blocks (for rendering).
+    pub fn paste_blocks(&self) -> &[PasteBlock] {
+        &self.paste_blocks
+    }
+
+    /// Insert a paste block at the current cursor position.
+    ///
+    /// Single-line pastes are inserted character-by-character as normal text.
+    /// Multi-line pastes store the full content in `paste_blocks` and insert
+    /// a NUL-delimited placeholder token (`\x00PASTE:N\x00`) into the buffer
+    /// so the display layer can render a collapsed amber preview.
+    pub fn insert_paste_block(&mut self, content: String) {
+        self.save_undo();
+        let line_count = content.lines().count();
+        if line_count <= 1 {
+            // Single-line paste: just insert normally
+            for c in content.chars() {
+                self.buffer.insert(self.cursor, c);
+                self.cursor += c.len_utf8();
+            }
+            return;
+        }
+        let id = self.next_paste_id;
+        self.next_paste_id += 1;
+        let placeholder = format!("\x00PASTE:{}\x00", id);
+        for c in placeholder.chars() {
+            self.buffer.insert(self.cursor, c);
+            self.cursor += c.len_utf8();
+        }
+        self.paste_blocks.push(PasteBlock { id, content, line_count });
+    }
+
+    /// Expand all paste-block placeholder tokens in `text`, replacing them
+    /// with their full content.  Called on submit so the message sent to the
+    /// daemon contains the real text.
+    pub fn expand_paste_blocks(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        for block in &self.paste_blocks {
+            let placeholder = format!("\x00PASTE:{}\x00", block.id);
+            result = result.replace(&placeholder, &block.content);
+        }
+        result
+    }
+
+    /// Build the amber display label for a paste-block placeholder.
+    /// Returns `None` when no block with the given `id` exists.
+    pub fn paste_block_display(id: usize, blocks: &[PasteBlock]) -> Option<String> {
+        blocks.iter().find(|b| b.id == id).map(|b| {
+            let first_line = b.content.lines().next().unwrap_or("");
+            let truncated: String = first_line.chars().take(20).collect();
+            let ellipsis = if first_line.chars().count() > 20 { "..." } else { "" };
+            format!(
+                "[Pasted text #{} +{} lines: {}{}]",
+                b.id + 1,
+                b.line_count,
+                truncated,
+                ellipsis
+            )
+        })
     }
 
     /// Get (line_index, col_index) for current cursor position
@@ -162,14 +236,17 @@ impl InputState {
                 self.save_undo();
                 self.buffer.clear();
                 self.cursor = 0;
+                self.paste_blocks.clear();
             }
             InputAction::Submit => {
                 if !self.buffer.trim().is_empty() {
-                    self.submitted = Some(self.buffer.clone());
+                    let expanded = self.expand_paste_blocks(&self.buffer);
+                    self.submitted = Some(expanded);
                     self.buffer.clear();
                     self.cursor = 0;
                     self.undo_stack.clear();
                     self.redo_stack.clear();
+                    self.paste_blocks.clear();
                 }
             }
             InputAction::ToggleMode => {
@@ -182,6 +259,7 @@ impl InputState {
                 self.save_undo();
                 self.buffer.clear();
                 self.cursor = 0;
+                self.paste_blocks.clear();
             }
             InputAction::InsertNewline => {
                 self.save_undo();
@@ -723,5 +801,110 @@ mod tests {
 
         // Beyond last line
         assert_eq!(state.line_col_to_offset_public(5, 0), 12);
+    }
+
+    // ── Paste-block tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn single_line_paste_inserts_normally() {
+        let mut state = InputState::new();
+        state.insert_paste_block("hello".to_string());
+        assert_eq!(state.buffer(), "hello");
+        assert!(state.paste_blocks().is_empty());
+    }
+
+    #[test]
+    fn multiline_paste_stores_block_and_placeholder() {
+        let mut state = InputState::new();
+        state.insert_paste_block("line1\nline2\nline3".to_string());
+        assert_eq!(state.paste_blocks().len(), 1);
+        assert_eq!(state.paste_blocks()[0].line_count, 3);
+        // Buffer should contain the placeholder token, not the raw text
+        assert!(state.buffer().contains("\x00PASTE:0\x00"));
+        assert!(!state.buffer().contains("line1"));
+    }
+
+    #[test]
+    fn paste_block_ids_increment() {
+        let mut state = InputState::new();
+        state.insert_paste_block("a\nb".to_string());
+        state.insert_paste_block("c\nd".to_string());
+        assert_eq!(state.paste_blocks().len(), 2);
+        assert_eq!(state.paste_blocks()[0].id, 0);
+        assert_eq!(state.paste_blocks()[1].id, 1);
+    }
+
+    #[test]
+    fn expand_paste_blocks_replaces_placeholders() {
+        let mut state = InputState::new();
+        state.reduce(InputAction::InsertChar('x'));
+        state.reduce(InputAction::InsertChar(' '));
+        state.insert_paste_block("foo\nbar".to_string());
+        state.reduce(InputAction::InsertChar(' '));
+        state.reduce(InputAction::InsertChar('y'));
+        let expanded = state.expand_paste_blocks(state.buffer());
+        assert!(expanded.contains("foo\nbar"));
+        assert!(expanded.starts_with("x "));
+        assert!(expanded.ends_with(" y"));
+    }
+
+    #[test]
+    fn submit_expands_paste_blocks_in_submitted_text() {
+        let mut state = InputState::new();
+        state.insert_paste_block("first\nsecond".to_string());
+        state.reduce(InputAction::Submit);
+        let submitted = state.take_submitted().expect("should have submitted text");
+        assert!(submitted.contains("first\nsecond"));
+        assert!(state.paste_blocks().is_empty());
+        assert_eq!(state.buffer(), "");
+    }
+
+    #[test]
+    fn clear_removes_paste_blocks() {
+        let mut state = InputState::new();
+        state.insert_paste_block("a\nb".to_string());
+        assert_eq!(state.paste_blocks().len(), 1);
+        state.reduce(InputAction::Clear);
+        assert!(state.paste_blocks().is_empty());
+    }
+
+    #[test]
+    fn clear_line_removes_paste_blocks() {
+        let mut state = InputState::new();
+        state.insert_paste_block("a\nb".to_string());
+        state.reduce(InputAction::ClearLine);
+        assert!(state.paste_blocks().is_empty());
+    }
+
+    #[test]
+    fn paste_block_display_formats_label() {
+        let blocks = vec![PasteBlock {
+            id: 0,
+            content: "fix this bug\nand that one\nand another".to_string(),
+            line_count: 3,
+        }];
+        let label = InputState::paste_block_display(0, &blocks).unwrap();
+        assert!(label.contains("[Pasted text #1"));
+        assert!(label.contains("+3 lines"));
+        assert!(label.contains("fix this bug"));
+    }
+
+    #[test]
+    fn paste_block_display_truncates_long_first_line() {
+        let long_line = "a".repeat(30);
+        let content = format!("{}\nmore", long_line);
+        let blocks = vec![PasteBlock {
+            id: 0,
+            content,
+            line_count: 2,
+        }];
+        let label = InputState::paste_block_display(0, &blocks).unwrap();
+        assert!(label.contains("..."));
+    }
+
+    #[test]
+    fn paste_block_display_returns_none_for_unknown_id() {
+        let blocks: Vec<PasteBlock> = Vec::new();
+        assert!(InputState::paste_block_display(42, &blocks).is_none());
     }
 }

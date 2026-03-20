@@ -207,11 +207,12 @@ impl TuiModel {
             }
         }
 
-        // Normal text paste — insert into input buffer
-        for c in text.chars() {
-            if c == '\n' || c == '\r' {
-                self.input.reduce(input::InputAction::InsertNewline);
-            } else {
+        // Multi-line paste: create a collapsed paste block preview
+        if text.contains('\n') {
+            self.input.insert_paste_block(text);
+        } else {
+            // Single-line: insert normally
+            for c in text.chars() {
                 self.input.reduce(input::InputAction::InsertChar(c));
             }
         }

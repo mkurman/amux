@@ -4,8 +4,52 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, BorderType, Paragraph, Wrap};
 
 use crate::app::Attachment;
-use crate::state::input::InputState;
+use crate::state::input::{InputState, PasteBlock};
 use crate::theme::ThemeTokens;
+
+/// Parse `text` for `\x00PASTE:N\x00` tokens and return a list of styled
+/// spans, rendering paste blocks as amber summary labels.
+fn render_buffer_with_paste_blocks<'a>(
+    text: &str,
+    paste_blocks: &[PasteBlock],
+    theme: &ThemeTokens,
+) -> Vec<Span<'a>> {
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    let mut remaining = text;
+    let amber = Style::default().fg(Color::Indexed(178));
+
+    while let Some(start) = remaining.find("\x00PASTE:") {
+        // Text before the placeholder
+        if start > 0 {
+            spans.push(Span::styled(remaining[..start].to_string(), theme.fg_active));
+        }
+
+        // Find the closing NUL after "PASTE:N"
+        let inner = &remaining[start + 1..]; // skip leading NUL
+        if let Some(end_offset) = inner.find('\x00') {
+            let tag = &inner[..end_offset]; // e.g. "PASTE:3"
+            if let Some(id_str) = tag.strip_prefix("PASTE:") {
+                if let Ok(id) = id_str.parse::<usize>() {
+                    if let Some(label) = InputState::paste_block_display(id, paste_blocks) {
+                        spans.push(Span::styled(label, amber));
+                    }
+                }
+            }
+            remaining = &remaining[start + 1 + end_offset + 1..];
+        } else {
+            // Malformed token — emit the rest verbatim
+            spans.push(Span::styled(remaining[start..].to_string(), theme.fg_active));
+            return spans;
+        }
+    }
+
+    // Trailing text after the last placeholder (or the whole string when no tokens)
+    if !remaining.is_empty() {
+        spans.push(Span::styled(remaining.to_string(), theme.fg_active));
+    }
+
+    spans
+}
 
 /// Render the bordered input box (always-insert prompt)
 pub fn render_input(
@@ -117,7 +161,10 @@ pub fn render_input(
             return;
         }
 
-        // Build display string with cursor inserted at the correct position
+        // Build display string with cursor inserted at the correct position.
+        // Note: paste-block placeholders (\x00PASTE:N\x00) must not be split
+        // across the cursor insertion point, so we work with the raw buffer
+        // (no '\n' inside placeholders) and just inject the cursor glyph.
         let before_cursor = &buf[..cursor_pos];
         let after_cursor = &buf[cursor_pos..];
         let mut display = String::with_capacity(buf.len() + cursor_char.len());
@@ -125,12 +172,14 @@ pub fn render_input(
         display.push_str(cursor_char);
         display.push_str(after_cursor);
 
+        // Split only on real newlines (placeholders don't contain '\n')
         let raw_lines: Vec<&str> = display.split('\n').collect();
+        let paste_blocks = input.paste_blocks();
 
         for (i, line_text) in raw_lines.iter().enumerate() {
             let is_first = i == 0;
 
-            let mut spans = Vec::new();
+            let mut spans: Vec<Span<'_>> = Vec::new();
             if is_first {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled("\u{25b6}", theme.accent_primary));
@@ -138,7 +187,8 @@ pub fn render_input(
             } else {
                 spans.push(Span::raw("   "));
             }
-            spans.push(Span::raw(line_text.to_string()));
+            // Render paste-block placeholders as styled amber labels
+            spans.extend(render_buffer_with_paste_blocks(line_text, paste_blocks, theme));
             lines.push(Line::from(spans));
         }
 
