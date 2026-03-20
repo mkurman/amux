@@ -144,20 +144,25 @@ impl TuiModel {
     /// Calculate the dynamic input area height based on buffer content and attachments.
     /// Grows from 3 (border + 1 line + border) to a max of 12 rows.
     fn input_height(&self) -> u16 {
-        // Account for visual line wrapping, not just \n count
-        let inner_width = self.width.saturating_sub(5) as usize; // borders + prompt arrow + padding
-        let visual_lines: usize = if inner_width == 0 {
-            1
-        } else {
-            self.input.buffer().split('\n')
-                .map(|line| {
-                    let len = line.chars().count();
-                    if len == 0 { 1 } else { (len + inner_width - 1) / inner_width }
-                })
-                .sum()
-        };
+        // Inner area = terminal_width - 2 (left+right border)
+        // First line has "▶ " (2 chars) prefix, continuation lines have "  " (3 chars) indent
+        // Ratatui wraps at the Paragraph area width
+        let inner_w = self.width.saturating_sub(2) as usize;
+        if inner_w <= 4 {
+            return 3;
+        }
+        let first_line_w = inner_w.saturating_sub(3); // "▶ " prompt
+        let cont_line_w = inner_w.saturating_sub(3);  // continuation indent
+        let visual_lines: usize = self.input.buffer().split('\n')
+            .enumerate()
+            .map(|(i, line)| {
+                let w = if i == 0 { first_line_w } else { cont_line_w };
+                let len = line.chars().count() + if i == self.input.buffer().split('\n').count() - 1 { 1 } else { 0 }; // cursor on last
+                if w == 0 || len == 0 { 1 } else { (len + w - 1) / w }
+            })
+            .sum();
         let attach_count = self.attachments.len();
-        (visual_lines + attach_count + 2).clamp(3, 12) as u16 // +2 for borders
+        (visual_lines + attach_count + 2).clamp(3, 12) as u16
     }
 
     /// Handle pasted text (from bracketed paste). Inserts all characters
