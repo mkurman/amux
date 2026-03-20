@@ -1114,12 +1114,18 @@ impl TuiModel {
             // Sidebar tab switching via Tab when sidebar is focused
             // (removed [/] keys — confusing)
 
+            // ── Ctrl+J / Ctrl+Enter: insert newline in input ─────────────────
+            KeyCode::Char('j') if ctrl && self.focus == FocusArea::Input => {
+                self.input.reduce(input::InputAction::InsertNewline);
+            }
+
             // ── Input-only: Enter submits, Backspace deletes, chars type ──────
             KeyCode::Enter => {
-                // Shift+Enter or Alt+Enter inserts newline in input (does not submit)
+                // Shift+Enter, Alt+Enter, or Ctrl+Enter inserts newline
                 let shift = modifiers.contains(KeyModifiers::SHIFT);
                 let alt = modifiers.contains(KeyModifiers::ALT);
-                if shift || alt {
+                let ctrl_enter = modifiers.contains(KeyModifiers::CONTROL);
+                if shift || alt || ctrl_enter {
                     if self.focus != FocusArea::Input {
                         self.focus = FocusArea::Input;
                         self.input.set_mode(input::InputMode::Insert);
@@ -2168,6 +2174,15 @@ impl TuiModel {
                 }
                 // Always keep Insert mode active
                 self.input.set_mode(input::InputMode::Insert);
+            }
+            // Right-click: paste from clipboard (like Ctrl+V)
+            MouseEventKind::Down(MouseButton::Right) => {
+                match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                    Ok(text) if !text.is_empty() => {
+                        self.handle_paste(text);
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
