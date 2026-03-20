@@ -145,14 +145,22 @@ impl TuiModel {
     /// Grows from 3 (border + 1 line + border) to a max of 12 rows.
     fn input_height(&self) -> u16 {
         use unicode_width::UnicodeWidthStr;
-        // Inner area = terminal_width - 2 (borders)
-        // Prompt " ▶ " takes ~4 display columns (▶ is often 2-wide)
-        // Subtract extra padding to wrap BEFORE hitting the border
+        // The Paragraph with .wrap() wraps at the inner area width.
+        // Inner area = block inner = total_width - 2 (borders).
+        // But all our Line spans start with " ▶ " (first line) or "   " (continuations)
+        // which take display columns. Ratatui counts the full span widths.
+        // The key insight: Paragraph::wrap wraps at `area.width` columns total,
+        // INCLUDING the prompt spans. So effective text width = area.width - prompt_width.
+        //
+        // Block::inner with Borders::ALL subtracts 2 (left+right border).
+        // So inner.width = self.width - 2.
+        // Prompt " ▶ " = 1 + 2 + 1 = 4 display columns (▶ is 2-wide).
         let inner_w = self.width.saturating_sub(2) as usize;
-        if inner_w <= 6 {
+        let prompt_w = 4; // " ▶ " display width
+        let text_w = inner_w.saturating_sub(prompt_w);
+        if text_w <= 2 {
             return 3;
         }
-        let text_w = inner_w.saturating_sub(5); // prompt + padding safety
         let visual_lines: usize = self.input.buffer().split('\n')
             .map(|line| {
                 let display_width = UnicodeWidthStr::width(line) + 1; // +1 for cursor
@@ -524,8 +532,29 @@ impl TuiModel {
         let area = frame.area();
         let w = area.width;
 
-        // Layout: header (3) + body (flex) + input (dynamic 3-10) + status bar (1)
-        let input_height = self.input_height();
+        // Layout: header (3) + body (flex) + input (dynamic 3-12) + status bar (1)
+        // Use the actual frame width for accurate height calculation
+        let saved_width = self.width;
+        // SAFETY: we're in render (immutable), but input_height reads self.width
+        // Just use frame width directly via a local calculation
+        let input_height = {
+            use unicode_width::UnicodeWidthStr;
+            let inner_w = w.saturating_sub(2) as usize;
+            let prompt_w = 4;
+            let text_w = inner_w.saturating_sub(prompt_w);
+            if text_w <= 2 {
+                3u16
+            } else {
+                let visual_lines: usize = self.input.buffer().split('\n')
+                    .map(|line| {
+                        let dw = UnicodeWidthStr::width(line) + 1;
+                        if text_w == 0 { 1 } else { (dw + text_w - 1) / text_w }
+                    })
+                    .sum();
+                let attach_count = self.attachments.len();
+                (visual_lines + attach_count + 2).clamp(3, 12) as u16
+            }
+        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -586,6 +615,7 @@ impl TuiModel {
             self.focus == FocusArea::Input,
             self.modal.top().is_some(),
             &self.attachments,
+            self.tick_counter,
         );
 
         // Render status bar (bare, below input)

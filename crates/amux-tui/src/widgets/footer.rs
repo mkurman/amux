@@ -16,6 +16,7 @@ pub fn render_input(
     focused: bool,
     modal_open: bool,
     attachments: &[Attachment],
+    tick: u64,
 ) {
     let border_style = if modal_open {
         theme.fg_dim
@@ -65,6 +66,57 @@ pub fn render_input(
             ]));
         }
 
+        // Animated placeholder when buffer is empty
+        if buf.is_empty() && attachments.is_empty() {
+            let placeholders = [
+                "Ask anything... plan \u{00b7} solve \u{00b7} ship",
+                "Try: /settings to configure your AI",
+                "Shift+Enter for multi-line input",
+                "/attach <file> to include context",
+                "Ctrl+P for command palette",
+                "/help to see all keyboard shortcuts",
+                "Paste a file path to auto-attach it",
+                "Ctrl+Z to undo, Ctrl+Y to redo",
+                "What would you like to build today?",
+                "Describe a bug and I'll investigate",
+                "Ask me to explain any code file",
+            ];
+            // Cycle through placeholders every ~4 seconds (80 ticks at 50ms)
+            let placeholder_idx = ((tick / 80) as usize) % placeholders.len();
+            let placeholder = placeholders[placeholder_idx];
+
+            // Typing animation: reveal chars progressively within the 4-second window
+            let ticks_in_cycle = (tick % 80) as usize;
+            let chars_to_show = (ticks_in_cycle * placeholder.chars().count() / 40)
+                .min(placeholder.chars().count()); // fully revealed at tick 40 of 80
+
+            let visible: String = placeholder.chars().take(chars_to_show).collect();
+            let cursor_blink = if (tick / 10) % 2 == 0 { "\u{2588}" } else { " " };
+
+            let dim_style = Style::default().fg(Color::Indexed(239));
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled("\u{25b6}", dim_style),
+                Span::raw(" "),
+                Span::styled(visible, dim_style),
+                Span::styled(cursor_blink, dim_style),
+            ]));
+
+            let visible_height = inner.height as usize;
+            let scroll_offset = if lines.len() > visible_height {
+                (lines.len() - visible_height) as u16
+            } else {
+                0
+            };
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .wrap(ratatui::widgets::Wrap { trim: false })
+                    .scroll((scroll_offset, 0)),
+                inner,
+            );
+            return;
+        }
+
         // Build display string with cursor inserted at the correct position
         let before_cursor = &buf[..cursor_pos];
         let after_cursor = &buf[cursor_pos..];
@@ -84,7 +136,6 @@ pub fn render_input(
                 spans.push(Span::styled("\u{25b6}", theme.accent_primary));
                 spans.push(Span::raw(" "));
             } else {
-                // Continuation lines: indent to match prompt
                 spans.push(Span::raw("   "));
             }
             spans.push(Span::raw(line_text.to_string()));
