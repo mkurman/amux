@@ -27,7 +27,12 @@ use crate::state::DaemonCommand;
 use crate::wire::FetchedModel;
 
 fn main() -> Result<()> {
-    let log_file = std::fs::File::create(std::env::temp_dir().join("tamux-tui.log"))?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/tmp".to_string());
+    let log_dir = format!("{}/.tamux", home);
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_file = std::fs::File::create(format!("{}/tamux-tui.log", log_dir))?;
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_writer(log_file)
